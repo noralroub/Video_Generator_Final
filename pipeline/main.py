@@ -22,6 +22,7 @@ from scenes import generate_scenes, save_scenes, load_scenes
 from audio import generate_audio, save_audio_metadata
 from video import generate_videos, save_video_metadata
 from pipeline import orchestrate_pipeline, PipelineError
+from presentation import render_presentation
 
 logging.basicConfig(
     level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s"
@@ -415,9 +416,17 @@ def generate_videos_cmd(metadata_file, output_dir, max_workers, poll_interval):
             "generate-script",
             "generate-audio",
             "generate-videos",
+            "generate-presentation",
         ]
     ),
     help="Stop pipeline after this step",
+)
+@click.option(
+    "--output-format",
+    "-f",
+    type=click.Choice(["video", "presentation"]),
+    default="video",
+    help="Output format: 'video' (Veo clips + merge) or 'presentation' (HTML with synced audio). Default: video",
 )
 @click.option(
     "--voice", "-v", default="Kore", help="Gemini TTS voice to use (default: Kore)"
@@ -439,6 +448,7 @@ def generate_video(
     output_dir: str,
     skip_existing: bool,
     stop_after: str,
+    output_format: str,
     voice: str,
     max_workers: int,
     no_merge: bool,
@@ -480,11 +490,18 @@ def generate_video(
             voice=voice,
             max_workers=max_workers,
             merge=not no_merge,
+            output_format=output_format,
         )
         click.secho(
-            f"✓ Pipeline complete! Videos in {output_path}", fg="green", bold=True
+            f"✓ Pipeline complete! Output in {output_path}", fg="green", bold=True
         )
-        if not no_merge:
+        if output_format == "presentation":
+            click.secho(
+                f"✓ Presentation: {output_path}/presentation.html (with audio.wav)",
+                fg="green",
+                bold=True,
+            )
+        elif not no_merge:
             click.secho(
                 f"✓ Final merged video: {output_path}/final_video.mp4",
                 fg="green",
@@ -496,6 +513,43 @@ def generate_video(
     except Exception as e:
         click.secho(f"✗ Unexpected error: {e}", fg="red", err=True)
         logging.exception("Unexpected error in pipeline")
+        raise click.Abort()
+
+
+@cli.command("generate-presentation")
+@click.argument("output_dir", type=click.Path(exists=True, file_okay=False))
+@click.option(
+    "--audio-src",
+    default="audio.wav",
+    help="Audio filename or URL for the presentation (default: audio.wav)",
+)
+def generate_presentation_cmd(output_dir: str, audio_src: str) -> None:
+    """Generate HTML presentation from existing script and audio in OUTPUT_DIR.
+
+    Requires script.json in OUTPUT_DIR. If audio_metadata.json exists, slide
+    timing will be synced to the narration; otherwise uses default durations.
+
+    Example:
+
+        python main.py generate-presentation ./my_paper
+    """
+    output_path = Path(output_dir)
+    script_path = output_path / "script.json"
+    if not script_path.exists():
+        click.secho(f"✗ Script not found: {script_path}", fg="red", err=True)
+        raise click.Abort()
+    html_path = output_path / "presentation.html"
+    audio_metadata_path = output_path / "audio_metadata.json"
+    try:
+        render_presentation(
+            script_path=script_path,
+            output_path=html_path,
+            audio_metadata_path=audio_metadata_path if audio_metadata_path.exists() else None,
+            audio_src=audio_src,
+        )
+        click.secho(f"✓ Presentation written to {html_path}", fg="green", bold=True)
+    except Exception as e:
+        click.secho(f"✗ Error: {e}", fg="red", err=True)
         raise click.Abort()
 
 

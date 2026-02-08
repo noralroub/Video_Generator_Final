@@ -3,19 +3,30 @@
 {% block title %}Result - {{ pmid }} - KyleAI{% endblock %}
 
 {% block content %}
-  <h1>Video Result</h1>
-  <p>Your AI-generated video for paper <strong>{{ pmid }}</strong> is ready!</p>
+  <h1>{% if video_url and presentation_url %}Video &amp; presentation result{% elif presentation_url %}Presentation result{% else %}Video Result{% endif %}</h1>
+  <p>Your AI-generated {% if video_url and presentation_url %}video and presentation{% elif presentation_url %}presentation{% else %}video{% endif %} for paper <strong>{{ pmid }}</strong> is ready!</p>
   
   <div class="button-group">
-    <a href="{{ video_url }}" class="btn-primary">Download Video</a>
+    {% if video_url %}
+    <a href="{{ video_url }}" class="btn-primary">▶️ Play/Download Video</a>
+    {% endif %}
+    {% if presentation_url %}
+    <a href="{{ presentation_url }}" class="btn-primary" target="_blank" rel="noopener">📄 View presentation</a>
+    {% endif %}
   </div>
 
+  {% if video_url %}
   <div class="video-preview">
     <video controls>
       <source src="{{ video_url }}" type="video/mp4">
       Your browser does not support the video tag.
     </video>
   </div>
+  {% endif %}
+
+  {% if presentation_url and not video_url %}
+  <p>Open the presentation link above to view the HTML slides with synced narration.</p>
+  {% endif %}
 
   <div class="button-group">
     <a href="/upload/" class="btn-primary">Generate another video</a>

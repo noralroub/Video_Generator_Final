@@ -8,6 +8,7 @@ from typing import Callable, Optional
 
 from audio import generate_audio, save_audio_metadata
 from pubmed import fetch_paper
+from presentation import render_presentation
 from scenes import generate_scenes, save_scenes, load_scenes
 from video import generate_videos, save_video_metadata
 
@@ -137,6 +138,24 @@ def check_videos_generated(output_dir: Path) -> bool:
     return all_clips_exist
 
 
+def check_presentation_generated(output_dir: Path) -> bool:
+    """Check if HTML presentation has been generated."""
+    return (output_dir / "presentation.html").exists()
+
+
+def _generate_presentation_step(output_dir: Path) -> None:
+    """Execute the generate-presentation step."""
+    script_path = output_dir / "script.json"
+    output_path = output_dir / "presentation.html"
+    audio_metadata_path = output_dir / "audio_metadata.json"
+    render_presentation(
+        script_path=script_path,
+        output_path=output_path,
+        audio_metadata_path=audio_metadata_path if audio_metadata_path.exists() else None,
+        audio_src="audio.wav",
+    )
+    logger.info("Generated presentation.html with embedded audio and synced slide timing")
+
 
 
 def orchestrate_pipeline(
@@ -147,6 +166,7 @@ def orchestrate_pipeline(
     voice: str = "Kore",
     max_workers: int = 5,
     merge: bool = True,
+    output_format: str = "video",
 ) -> None:
     """Orchestrate the complete video generation pipeline.
 
@@ -158,14 +178,15 @@ def orchestrate_pipeline(
         voice: Gemini TTS voice to use
         max_workers: Maximum parallel workers for video generation
         merge: If True, concatenate all video clips into a single final video (default: True)
+        output_format: "video" (default) or "presentation". When "presentation", generates
+            presentation.html instead of video clips and final_video.mp4.
 
     Raises:
         PipelineError: If any step fails
     """
     output_dir.mkdir(parents=True, exist_ok=True)
 
-    # Define pipeline steps
-    steps = [
+    common_steps = [
         PipelineStep(
             name="fetch-paper",
             description=f"Fetching paper {pmid} from PubMed Central",
@@ -184,13 +205,26 @@ def orchestrate_pipeline(
             check_completion=lambda: check_audio_generated(output_dir),
             execute=lambda: _generate_audio_step(output_dir, voice),
         ),
-        PipelineStep(
-            name="generate-videos",
-            description="Generating videos for all scenes",
-            check_completion=lambda: check_videos_generated(output_dir),
-            execute=lambda: _generate_videos_step(output_dir, max_workers, merge),
-        ),
     ]
+
+    if output_format == "presentation":
+        steps = common_steps + [
+            PipelineStep(
+                name="generate-presentation",
+                description="Generating HTML presentation with synced audio",
+                check_completion=lambda: check_presentation_generated(output_dir),
+                execute=lambda: _generate_presentation_step(output_dir),
+            ),
+        ]
+    else:
+        steps = common_steps + [
+            PipelineStep(
+                name="generate-videos",
+                description="Generating videos for all scenes",
+                check_completion=lambda: check_videos_generated(output_dir),
+                execute=lambda: _generate_videos_step(output_dir, max_workers, merge),
+            ),
+        ]
 
     logger.info(f"Starting pipeline for PMID {pmid}")
     logger.info(f"Output directory: {output_dir}")

@@ -1,0 +1,213 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>{{ title }}</title>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            background: #0a0a0a;
+            display: flex; justify-content: center; align-items: center;
+            min-height: 100vh; overflow: hidden;
+        }
+        .video-container {
+            width: 400px; height: 711px;
+            background: #000;
+            position: relative; overflow: hidden;
+            border-radius: 40px;
+            box-shadow: 0 0 60px rgba(147, 51, 234, 0.3);
+        }
+        .scene {
+            position: absolute;
+            width: 100%; height: 100%;
+            opacity: 0;
+            transition: opacity 0.5s ease;
+            overflow: hidden;
+        }
+        .scene.active { opacity: 1; }
+        .scene-hook {
+            background: radial-gradient(ellipse at center, #1e3c72 0%, #2a5298 100%);
+            display: flex; flex-direction: column; justify-content: center; align-items: center;
+        }
+        .particles { position: absolute; width: 100%; height: 100%; }
+        .particle {
+            position: absolute; width: 4px; height: 4px;
+            background: rgba(255, 255, 255, 0.8); border-radius: 50%;
+            animation: float 10s infinite ease-in-out;
+        }
+        @keyframes float {
+            0%, 100% { transform: translateY(0) translateX(0); opacity: 0; }
+            10% { opacity: 1; } 90% { opacity: 1; }
+            100% { transform: translateY(-100vh) translateX(50px); }
+        }
+        .hook-text { color: white; text-align: center; z-index: 2; padding: 40px; }
+        .hook-text h1 { font-size: 2rem; font-weight: 800; margin-bottom: 16px; line-height: 1.2; animation: slideInScale 1s ease-out forwards; }
+        .hook-text .subline { font-size: 1.1rem; opacity: 0.85; }
+        @keyframes slideInScale {
+            0% { transform: scale(0.9) translateY(30px); opacity: 0; }
+            100% { transform: scale(1) translateY(0); opacity: 1; }
+        }
+        .scene-content {
+            display: flex; flex-direction: column; justify-content: center; align-items: center;
+            padding: 40px; color: white;
+        }
+        .scene-content.scene-bg-0 { background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); }
+        .scene-content.scene-bg-1 { background: linear-gradient(135deg, #f093fb 0%, #f5576c 100%); }
+        .scene-content.scene-bg-2 { background: #1a1a2e; }
+        .content-card {
+            background: rgba(255, 255, 255, 0.15);
+            backdrop-filter: blur(10px);
+            padding: 36px; border-radius: 24px;
+            text-align: center; max-width: 340px;
+            animation: fadeInUp 0.8s ease-out forwards;
+            box-shadow: 0 20px 40px rgba(0, 0, 0, 0.15);
+        }
+        @keyframes fadeInUp {
+            0% { transform: translateY(30px); opacity: 0; }
+            100% { transform: translateY(0); opacity: 1; }
+        }
+        .content-card p { font-size: 1.2rem; line-height: 1.5; }
+        .scene-cta {
+            background: radial-gradient(circle at center, #ff0844 0%, #ffb199 100%);
+            display: flex; flex-direction: column; justify-content: center; align-items: center;
+            color: white; text-align: center; padding: 40px;
+        }
+        .cta-title { font-size: 2rem; font-weight: 800; margin-bottom: 24px; animation: slideInLeft 1s ease-out; }
+        .cta-sub { font-size: 1.2rem; margin-bottom: 24px; opacity: 0.95; }
+        @keyframes slideInLeft {
+            0% { transform: translateX(-40px); opacity: 0; }
+            100% { transform: translateX(0); opacity: 1; }
+        }
+        .progress-bar {
+            position: absolute; bottom: 0; width: 100%; height: 4px;
+            background: rgba(255, 255, 255, 0.2);
+        }
+        .progress-fill { height: 100%; background: white; width: 0%; transition: width 0.3s linear; }
+        .controls {
+            position: absolute; bottom: 20px; left: 50%; transform: translateX(-50%);
+            display: flex; gap: 20px; z-index: 100;
+        }
+        .control-btn {
+            width: 50px; height: 50px;
+            background: rgba(255, 255, 255, 0.9);
+            border: none; border-radius: 50%;
+            cursor: pointer; font-size: 1.5rem;
+            display: flex; align-items: center; justify-content: center;
+            transition: transform 0.3s;
+        }
+        .control-btn:hover { transform: scale(1.1); }
+        #narration { display: none; }
+    </style>
+</head>
+<body>
+    <audio id="narration" src="{{ audio_src }}"></audio>
+    <div class="video-container">
+        {% for scene in scenes %}
+        <div class="scene scene-{{ loop.index }} scene-{{ scene.slide_type }}{% if scene.slide_type == 'content' %} scene-bg-{{ (loop.index0 - 1) % 3 }}{% endif %}{% if loop.first %} active{% endif %}" data-scene-index="{{ loop.index }}">
+            {% if scene.slide_type == 'hook' %}
+            <div class="particles" id="particles-hook"></div>
+            <div class="hook-text">
+                <h1>{{ scene.text.split('.')[0] if '.' in scene.text else scene.text }}</h1>
+                {% if '.' in scene.text %}<p class="subline">{{ scene.text.split('.', 1)[1].strip()[:120] }}</p>{% endif %}
+            </div>
+            {% elif scene.slide_type == 'content' %}
+            <div class="content-card">
+                <p>{{ scene.text }}</p>
+            </div>
+            {% elif scene.slide_type == 'cta' %}
+            <h2 class="cta-title">{{ scene.text.split('.')[0] if '.' in scene.text else scene.text }}</h2>
+            {% if '.' in scene.text %}<p class="cta-sub">{{ scene.text.split('.', 1)[1].strip()[:100] }}</p>{% endif %}
+            <div class="cta-button">Learn more</div>
+            {% endif %}
+        </div>
+        {% endfor %}
+        <div class="progress-bar">
+            <div class="progress-fill" id="progress" style="width: 0%;"></div>
+        </div>
+        <div class="controls">
+            <button class="control-btn" id="playBtn" type="button" aria-label="Play">▶️</button>
+        </div>
+    </div>
+    <script>
+        (function() {
+            var sceneDurations = {{ scene_durations | tojson }};
+            var totalDuration = {{ total_duration | tojson }};
+            var particlesContainer = document.getElementById('particles-hook');
+            if (particlesContainer) {
+                for (var i = 0; i < 25; i++) {
+                    var p = document.createElement('div');
+                    p.className = 'particle';
+                    p.style.left = Math.random() * 100 + '%';
+                    p.style.animationDelay = Math.random() * 8 + 's';
+                    p.style.animationDuration = (10 + Math.random() * 10) + 's';
+                    particlesContainer.appendChild(p);
+                }
+            }
+            var scenes = document.querySelectorAll('.scene');
+            var playBtn = document.getElementById('playBtn');
+            var progress = document.getElementById('progress');
+            var audioEl = document.getElementById('narration');
+            var currentScene = 1;
+            var currentTime = 0;
+            var isPlaying = false;
+            var interval = null;
+            function showScene(num) {
+                currentScene = num;
+                scenes.forEach(function(s, i) { s.classList.toggle('active', i + 1 === num); });
+            }
+            function updateProgress() {
+                var pct = totalDuration > 0 ? (currentTime / totalDuration) * 100 : 0;
+                progress.style.width = Math.min(100, pct) + '%';
+            }
+            function play() {
+                isPlaying = true;
+                playBtn.textContent = '⏸️';
+                playBtn.setAttribute('aria-label', 'Pause');
+                if (audioEl && audioEl.src) {
+                    audioEl.currentTime = currentTime;
+                    audioEl.play().catch(function() {});
+                }
+                interval = setInterval(function() {
+                    if (audioEl && !audioEl.paused) currentTime = audioEl.currentTime;
+                    else currentTime += 0.1;
+                    updateProgress();
+                    var acc = 0;
+                    for (var i = 0; i < sceneDurations.length; i++) {
+                        acc += sceneDurations[i];
+                        if (currentTime <= acc) {
+                            if (currentScene !== i + 1) showScene(i + 1);
+                            break;
+                        }
+                    }
+                    if (currentTime >= totalDuration) {
+                        clearInterval(interval);
+                        interval = null;
+                        isPlaying = false;
+                        playBtn.textContent = '▶️';
+                        playBtn.setAttribute('aria-label', 'Play');
+                        if (audioEl) audioEl.pause();
+                    }
+                }, 100);
+            }
+            function pause() {
+                isPlaying = false;
+                playBtn.textContent = '▶️';
+                playBtn.setAttribute('aria-label', 'Play');
+                if (interval) { clearInterval(interval); interval = null; }
+                if (audioEl) audioEl.pause();
+            }
+            function togglePlay() {
+                if (isPlaying) pause(); else play();
+            }
+            playBtn.addEventListener('click', togglePlay);
+            if (audioEl) {
+                audioEl.addEventListener('ended', function() {
+                    if (isPlaying) { pause(); currentTime = 0; currentScene = 1; showScene(1); updateProgress(); }
+                });
+            }
+        })();
+    </script>
+</body>
+</html>

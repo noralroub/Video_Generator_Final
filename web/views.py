@@ -164,6 +164,21 @@ def _check_video_exists(pmid: str, user=None) -> tuple[bool, Optional[str]]:
     return False, None
 
 
+def _check_presentation_exists(pmid: str) -> tuple[bool, Optional[str]]:
+    """Check if HTML presentation exists for this paper; return (exists, url)."""
+    try:
+        output_dir = Path(settings.MEDIA_ROOT) / pmid
+        presentation_path = output_dir / "presentation.html"
+        if not presentation_path.exists():
+            return False, None
+        base = (settings.MEDIA_URL or "/media/").rstrip("/")
+        url = f"{base}/{pmid}/presentation.html"
+        return True, url
+    except Exception as e:
+        logger.warning(f"Error checking presentation existence: {e}")
+        return False, None
+
+
 def _validate_access_code(access_code: str | None) -> bool:
     """Validate the provided access code against the configured code.
     
@@ -857,11 +872,18 @@ def _get_pipeline_progress(output_dir: Path) -> Dict:
     - error: error message if failed (from Celery task)
     - error_type: user-friendly error type
     """
+    def _last_step_done(d: Path) -> bool:
+        return (
+            (d / "clips" / ".videos_complete").exists()
+            or (d / "final_video.mp4").exists()
+            or (d / "presentation.html").exists()
+        )
+
     steps = [
         ("fetch-paper", lambda d: (d / "paper.json").exists()),
         ("generate-script", lambda d: (d / "script.json").exists()),
         ("generate-audio", lambda d: (d / "audio.wav").exists() and (d / "audio_metadata.json").exists()),
-        ("generate-videos", lambda d: (d / "clips" / ".videos_complete").exists() or (d / "final_video.mp4").exists()),
+        ("generate-videos", _last_step_done),  # video merge or HTML presentation
     ]
     
     completed_steps = []
@@ -908,8 +930,9 @@ def _get_pipeline_progress(output_dir: Path) -> Dict:
     # Fallback to local filesystem check
     if not video_exists:
         video_exists = output_dir.exists() and final_video.exists()
-    
-    if video_exists:
+
+    presentation_exists = output_dir.exists() and (output_dir / "presentation.html").exists()
+    if video_exists or presentation_exists:
         status = "completed"
         return {
             "current_step": None,
@@ -1418,11 +1441,12 @@ def pipeline_status(request, pmid: str):
                     "total_steps": 4,
                 }
     
-    # Check if video exists (cloud storage or local)
+    # Check if video or presentation exists (cloud storage or local)
     final_video_exists, final_video_url = _check_video_exists(pmid, request.user)
+    presentation_exists, presentation_url = _check_presentation_exists(pmid)
     
-    # Ensure status is "completed" if video exists and progress is 100%
-    if final_video_exists and progress.get("progress_percent", 0) >= 100:
+    # Ensure status is "completed" if video or presentation exists and progress is 100%
+    if (final_video_exists or presentation_exists) and progress.get("progress_percent", 0) >= 100:
         progress["status"] = "completed"
 
     if request.GET.get("_json"):
@@ -1452,13 +1476,16 @@ def pipeline_status(request, pmid: str):
         except Exception:
             pass  # Ignore errors getting timestamp
         
-        # CRITICAL FIX: If status is completed or progress is 100%, ensure final_video_url is set
+        # CRITICAL FIX: If status is completed or progress is 100%, ensure final_video_url and/or presentation_url are set
         if (status["status"] == "completed" or status["progress_percent"] >= 100):
-            # Re-check video existence - might have been created after initial check
             final_video_exists, final_video_url = _check_video_exists(pmid, request.user)
+            presentation_exists, presentation_url = _check_presentation_exists(pmid)
             if final_video_exists and final_video_url:
                 status["final_video_url"] = final_video_url
                 status["final_video"] = True
+            if presentation_exists and presentation_url:
+                status["presentation_url"] = presentation_url
+                status["presentation_exists"] = True
         
         # Add error information if available
         if "error" in progress:
@@ -1504,8 +1531,10 @@ def pipeline_status(request, pmid: str):
     
     context = {
         "pmid": pmid,
-        "final_video_exists": final_video_exists,  # Use the checked value
+        "final_video_exists": final_video_exists,
         "final_video_url": final_video_url,
+        "presentation_exists": presentation_exists,
+        "presentation_url": presentation_url,
         "log_tail": log_tail,
         "progress": progress,
         "error_message": error_message,
@@ -1515,13 +1544,24 @@ def pipeline_status(request, pmid: str):
 
 
 def pipeline_result(request, pmid: str):
-    # Check if video exists (cloud storage or local)
     final_video_exists, video_url = _check_video_exists(pmid, request.user if hasattr(request, 'user') else None)
-    
+    presentation_exists, presentation_url = _check_presentation_exists(pmid)
+
     if final_video_exists and video_url:
-        return render(request, "result.html", {"pmid": pmid, "video_url": video_url})
-    else:
-        return HttpResponseRedirect(reverse("pipeline_status", args=[pmid]))
+        return render(request, "result.html", {
+            "pmid": pmid,
+            "video_url": video_url,
+            "presentation_exists": presentation_exists,
+            "presentation_url": presentation_url or "",
+        })
+    if presentation_exists and presentation_url:
+        return render(request, "result.html", {
+            "pmid": pmid,
+            "video_url": None,
+            "presentation_exists": True,
+            "presentation_url": presentation_url,
+        })
+    return HttpResponseRedirect(reverse("pipeline_status", args=[pmid]))
 
 
 @login_required
@@ -1869,10 +1909,11 @@ def api_status(request, paper_id: str):
             # Convert job to progress dict
             completed_steps = _get_completed_steps_from_progress(job.progress_percent)
             
-            # Check if video exists (R2 or local) - if it does and progress is 100%, mark as completed
+            # Check if video or presentation exists (R2 or local) - if so and progress is 100%, mark as completed
             final_video_exists, final_video_url = _check_video_exists(paper_id, request.user if hasattr(request, 'user') and request.user.is_authenticated else None)
+            presentation_exists, presentation_url = _check_presentation_exists(paper_id)
             job_status = job.status
-            if final_video_exists and job.progress_percent >= 100:
+            if (final_video_exists or presentation_exists) and job.progress_percent >= 100:
                 job_status = 'completed'
             
             progress = {
@@ -1896,6 +1937,9 @@ def api_status(request, paper_id: str):
                         progress["final_video_url"] = reverse("serve_video", args=[paper_id])
                 except Exception:
                     pass
+            if presentation_exists and presentation_url:
+                progress["presentation_url"] = presentation_url
+                progress["presentation_exists"] = True
     except Exception as e:
         import logging
         logger = logging.getLogger(__name__)
@@ -1906,9 +1950,11 @@ def api_status(request, paper_id: str):
         progress = _get_pipeline_progress(output_dir)
     
     final_video = output_dir / "final_video.mp4"
-    final_video_url = None
-    if final_video.exists():
-        final_video_url = f"{settings.MEDIA_URL}{paper_id}/final_video.mp4"
+    final_video_url = progress.get("final_video_url")
+    if final_video_url is None and final_video.exists():
+        base = (settings.MEDIA_URL or "/media/").rstrip("/")
+        final_video_url = f"{base}/{paper_id}/final_video.mp4"
+    presentation_exists, presentation_url = _check_presentation_exists(paper_id)
     
     # Get log tail
     log_path = output_dir / "pipeline.log"
@@ -1929,6 +1975,8 @@ def api_status(request, paper_id: str):
         "progress_percent": progress["progress_percent"],
         "progress_updated_at": progress.get("progress_updated_at"),
         "final_video_url": final_video_url,
+        "presentation_exists": presentation_exists,
+        "presentation_url": presentation_url,
         "log_tail": log_tail,
     }
     
@@ -1964,22 +2012,24 @@ def api_result(request, paper_id: str):
         "status_url": "/api/status/PMC10979640/"
     }
     """
-    # Check if video exists (cloud storage or local)
     final_video_exists, video_url = _check_video_exists(paper_id, request.user if hasattr(request, 'user') and request.user.is_authenticated else None)
-    
-    if final_video_exists and video_url:
-        return JsonResponse({
+    presentation_exists, presentation_url = _check_presentation_exists(paper_id)
+
+    if (final_video_exists and video_url) or (presentation_exists and presentation_url):
+        payload = {
             "paper_id": paper_id,
             "success": True,
-            "video_url": video_url,  # Use serve_video endpoint
             "status": "completed",
             "progress_percent": 100,
-        })
+        }
+        if final_video_exists and video_url:
+            payload["video_url"] = video_url
+        if presentation_exists and presentation_url:
+            payload["presentation_url"] = presentation_url
+        return JsonResponse(payload)
     else:
-        # Get progress for status info
         output_dir = Path(settings.MEDIA_ROOT) / paper_id
         progress = _get_pipeline_progress(output_dir)
-        
         return JsonResponse({
             "paper_id": paper_id,
             "success": False,
@@ -1987,7 +2037,7 @@ def api_result(request, paper_id: str):
             "status": progress["status"],
             "progress_percent": progress["progress_percent"],
             "status_url": f"/api/status/{paper_id}/",
-        }, status=202)  # Accepted but not ready
+        }, status=202)
 
 
 def analytics_endpoint(request):

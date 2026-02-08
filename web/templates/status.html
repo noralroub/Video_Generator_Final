@@ -8,11 +8,16 @@
 
   <!-- Status Alert Container (will be updated by JavaScript) -->
   <div id="status-alert-container">
-    {% if final_video_exists %}
+    {% if final_video_exists or presentation_exists %}
       <div class="alert alert-info">
-        <p><strong>Final video ready!</strong></p>
+        <p><strong>{% if final_video_exists and presentation_exists %}Video and presentation ready!{% elif final_video_exists %}Final video ready!{% else %}Presentation ready!{% endif %}</strong></p>
         <div class="button-group">
-          <a href="{{ final_video_url }}" class="btn-primary">Download/Play</a>
+          {% if final_video_exists %}
+          <a href="{{ final_video_url }}" class="btn-primary">▶️ Play/Download Video</a>
+          {% endif %}
+          {% if presentation_exists %}
+          <a href="{{ presentation_url }}" class="btn-primary" target="_blank" rel="noopener">📄 View presentation</a>
+          {% endif %}
           <a href="/result/{{ pmid }}" class="btn-secondary">Open result page</a>
         </div>
       </div>
@@ -36,28 +41,33 @@
     {% endif %}
   </div>
 
-  <!-- Video Download Section (shown when video exists) -->
-  {% if final_video_exists %}
+  <!-- Video / Presentation Section (shown when video or presentation exists) -->
+  {% if final_video_exists or presentation_exists %}
   <div data-video-section class="video-ready-section">
-    <h2>🎬 Video Ready!</h2>
-    <p>Your video has been successfully generated and is ready to download or play.</p>
+    <h2>{% if final_video_exists and presentation_exists %}🎬 Video &amp; presentation ready!{% elif final_video_exists %}🎬 Video Ready!{% else %}📄 Presentation ready!{% endif %}</h2>
+    <p>{% if final_video_exists and presentation_exists %}Your video and HTML presentation are ready.{% elif final_video_exists %}Your video has been successfully generated and is ready to download or play.{% else %}Your HTML presentation (with synced audio) is ready to view.{% endif %}</p>
     <div class="button-group">
+      {% if final_video_exists %}
       <a href="{{ final_video_url }}" class="btn-primary">▶️ Play/Download Video</a>
+      {% endif %}
+      {% if presentation_exists %}
+      <a href="{{ presentation_url }}" class="btn-primary" target="_blank" rel="noopener">📄 View presentation</a>
+      {% endif %}
       <a href="/result/{{ pmid }}" class="btn-secondary">📄 View Result Page</a>
     </div>
   </div>
   {% elif progress.progress_percent >= 100 %}
-  <!-- Video Section - Fallback that shows when progress is 100% but video not detected yet -->
   <div id="video-section-fallback" data-video-section class="video-ready-section">
-    <h2>🎬 Video Ready!</h2>
-    <p>Your video has been successfully generated.</p>
-    {% if final_video_url %}
+    <h2>🎬 Almost ready</h2>
+    <p>Generation complete. Output is being finalized.</p>
+    {% if final_video_url or presentation_url %}
     <div class="button-group">
-      <a href="{{ final_video_url }}" class="btn-primary">▶️ Play/Download Video</a>
+      {% if final_video_url %}<a href="{{ final_video_url }}" class="btn-primary">▶️ Play/Download Video</a>{% endif %}
+      {% if presentation_url %}<a href="{{ presentation_url }}" class="btn-primary" target="_blank" rel="noopener">📄 View presentation</a>{% endif %}
       <a href="/result/{{ pmid }}" class="btn-secondary">📄 View Result Page</a>
     </div>
     {% else %}
-    <p class="video-processing">Video file is being processed. Please refresh the page in a moment.</p>
+    <p class="video-processing">File is being processed. Please refresh the page in a moment.</p>
     <a href="/result/{{ pmid }}" class="btn-secondary">Try Result Page</a>
     {% endif %}
   </div>
@@ -71,10 +81,12 @@
     </div>
     <p><strong id="progress-text">{{ progress.progress_percent }}%</strong> complete (<span id="completed-count">{{ progress.completed_steps|length }}</span> of <span id="total-steps">{{ progress.total_steps }}</span> steps)</p>
     
-    {% if final_video_exists and progress.progress_percent >= 100 %}
+    {% if progress.progress_percent >= 100 %}
+    {% if final_video_exists or presentation_exists %}
     <div class="alert alert-info">
-      <p><strong>✅ All steps completed!</strong> Your video is ready. Use the download button above to access it.</p>
+      <p><strong>✅ All steps completed!</strong> Use the buttons above to play or download your {% if final_video_exists and presentation_exists %}video and presentation{% elif final_video_exists %}video{% else %}presentation{% endif %}.</p>
     </div>
+    {% endif %}
     {% endif %}
     
     <div id="current-step-container">
@@ -108,7 +120,7 @@
     // Auto-refresh status page
     const pmid = "{{ pmid }}";
     let refreshInterval = null;
-    let isCompleted = {% if final_video_exists %}true{% else %}false{% endif %};
+    let isCompleted = {% if final_video_exists or presentation_exists %}true{% else %}false{% endif %};
     let isFailed = {% if progress.status|default:"" == "failed" %}true{% else %}false{% endif %};
     let lastProgressTimestamp = null;
     let staleUpdateCount = 0;
@@ -187,21 +199,22 @@
           // Update status alert
           const statusContainer = document.getElementById('status-alert-container');
           if (statusContainer) {
-            // Check if video exists - multiple conditions
-            const videoReady = (
-              (data.status === 'completed' && data.final_video_url) ||
-              (data.progress_percent >= 100 && data.final_video_url) ||
-              (data.final_video === true && data.final_video_url)
-            );
+            const hasVideo = data.final_video_url && (data.final_video === true || data.status === 'completed' || data.progress_percent >= 100);
+            const hasPresentation = data.presentation_exists && data.presentation_url;
+            const outputReady = hasVideo || hasPresentation;
             
-            if (videoReady) {
-              // Video is ready - show success message
+            if (outputReady) {
+              const videoBtn = hasVideo ? `<a href="${data.final_video_url}" class="btn-primary">▶️ Play/Download Video</a>` : '';
+              const presentationBtn = hasPresentation ? `<a href="${data.presentation_url}" class="btn-primary" target="_blank" rel="noopener">📄 View presentation</a>` : '';
+              const title = hasVideo && hasPresentation ? '🎬 Video &amp; presentation ready!' : hasVideo ? '🎬 Video Ready!' : '📄 Presentation ready!';
+              const desc = hasVideo && hasPresentation ? 'Your video and HTML presentation are ready.' : hasVideo ? 'Your video has been successfully generated and is ready to download or play.' : 'Your HTML presentation (with synced audio) is ready to view.';
               statusContainer.innerHTML = `
                 <div class="video-ready-section">
-                  <h2>🎬 Video Ready!</h2>
-                  <p>Your video has been successfully generated and is ready to download or play.</p>
+                  <h2>${title}</h2>
+                  <p>${desc}</p>
                   <div class="button-group">
-                    <a href="${data.final_video_url}" class="btn-primary">▶️ Play/Download Video</a>
+                    ${videoBtn}
+                    ${presentationBtn}
                     <a href="/result/${pmid}" class="btn-secondary">📄 View Result Page</a>
                   </div>
                 </div>
