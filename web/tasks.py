@@ -64,6 +64,11 @@ def _parse_pipeline_progress(line: str, current_progress: dict) -> Optional[dict
             "complete": "complete",
             "percent": 100,
         },
+        "generate-presentation": {
+            "start": "step: generate-presentation",
+            "complete": "complete",
+            "percent": 100,
+        },
     }
     
     # Check for step starts first (before completion checks)
@@ -289,6 +294,8 @@ def generate_video_task(self, pmid: str, output_dir: str, user_id: Optional[int]
             raise FileNotFoundError(f"Pipeline script not found: {script_path}")
         
         cmd = [python_exe, str(script_path), "generate-video", pmid, str(output_path)]
+        if getattr(settings, "PIPELINE_OUTPUT", "video") == "presentation":
+            cmd.extend(["--output-format", "presentation"])
         
         logger.info(f"Running command: {' '.join(cmd)}")
         logger.info(f"Working directory: {settings.BASE_DIR}")
@@ -407,9 +414,10 @@ def generate_video_task(self, pmid: str, output_dir: str, user_id: Optional[int]
                 
                 # Final progress update
                 if progress_state["progress_percent"] < 100:
-                    # Check if final video exists
                     final_video = output_path / "final_video.mp4"
-                    if final_video.exists():
+                    presentation_html = output_path / "presentation.html"
+                    is_presentation_mode = getattr(settings, "PIPELINE_OUTPUT", "video") == "presentation"
+                    if final_video.exists() or (is_presentation_mode and presentation_html.exists()):
                         progress_state["progress_percent"] = 100
                         progress_state["current_step"] = None
                         progress_state["status"] = "completed"
@@ -485,15 +493,24 @@ def generate_video_task(self, pmid: str, output_dir: str, user_id: Optional[int]
         except Exception as e:
             logger.warning(f"Failed to process update queue: {e}")
         
-        # Check if pipeline succeeded
+        # Check if pipeline succeeded (video: final_video.mp4; presentation: presentation.html)
         final_video = output_path / "final_video.mp4"
-        
-        if return_code == 0 and final_video.exists():
+        presentation_html = output_path / "presentation.html"
+        is_presentation_mode = getattr(settings, "PIPELINE_OUTPUT", "video") == "presentation"
+        pipeline_succeeded = (
+            return_code == 0
+            and (final_video.exists() or (is_presentation_mode and presentation_html.exists()))
+        )
+
+        if pipeline_succeeded:
             task_result["status"] = "completed"
-            logger.info(f"Video generation completed successfully for {pmid}")
+            if is_presentation_mode and presentation_html.exists():
+                logger.info(f"Presentation generation completed successfully for {pmid}")
+            else:
+                logger.info(f"Video generation completed successfully for {pmid}")
             
-            # Upload to cloud storage (R2) or save locally
-            if job:
+            # Upload video to cloud storage (R2) or save locally — only when we have a video file
+            if job and final_video.exists():
                 try:
                     from django.core.files import File
                     from django.core.files.storage import default_storage
@@ -646,6 +663,25 @@ def generate_video_task(self, pmid: str, output_dir: str, user_id: Optional[int]
                     
                 except Exception as e:
                     logger.error(f"Failed to update job record on completion: {e}", exc_info=True)
+            elif job:
+                # Presentation-only: no video file; just mark job completed
+                try:
+                    job.refresh_from_db()
+                    from web.progress_manager import update_progress
+                    update_progress(
+                        task_id=self.request.id,
+                        progress_percent=100,
+                        current_step=None,
+                        status='completed'
+                    )
+                    job.refresh_from_db()
+                    job.status = 'completed'
+                    job.progress_percent = 100
+                    job.current_step = None
+                    job.completed_at = timezone.now()
+                    job.save(update_fields=['status', 'progress_percent', 'current_step', 'completed_at', 'updated_at'])
+                except Exception as e:
+                    logger.warning(f"Failed to update job record on presentation completion: {e}")
         else:
             # Pipeline failed - try to extract error from log
             error_message = _extract_error_from_log(log_path)
@@ -963,7 +999,7 @@ def update_job_progress_from_files(pmid: str, task_id: Optional[str] = None) -> 
             ("fetch-paper", 25, lambda d: (d / "paper.json").exists()),
             ("generate-script", 50, lambda d: (d / "script.json").exists()),
             ("generate-audio", 75, lambda d: (d / "audio.wav").exists() and (d / "audio_metadata.json").exists()),
-            ("generate-videos", 100, lambda d: (d / "clips" / ".videos_complete").exists() or (d / "final_video.mp4").exists()),
+            ("generate-videos", 100, lambda d: (d / "clips" / ".videos_complete").exists() or (d / "final_video.mp4").exists() or (d / "presentation.html").exists()),
         ]
         
         current_step = None
@@ -994,9 +1030,15 @@ def update_job_progress_from_files(pmid: str, task_id: Optional[str] = None) -> 
             job.current_step = current_step
             if progress_percent == 100:
                 final_video = output_dir / "final_video.mp4"
+                presentation = output_dir / "presentation.html"
                 if final_video.exists():
                     job.status = 'completed'
                     job.final_video_path = str(final_video)
+                    job.completed_at = timezone.now()
+                    job.current_step = None
+                elif presentation.exists():
+                    job.status = 'completed'
+                    job.final_video_path = ""  # No video in presentation mode
                     job.completed_at = timezone.now()
                     job.current_step = None
             job.save(update_fields=['progress_percent', 'current_step', 'status', 'final_video_path', 'completed_at', 'updated_at'])

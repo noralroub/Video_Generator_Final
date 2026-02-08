@@ -1784,16 +1784,16 @@ def api_start_generation(request):
                 status=500  # Internal Server Error
             )
         
-        # Validate API keys are set
+        # Validate API keys are set (RUNWAYML only required for video mode)
         if not os.getenv("GEMINI_API_KEY"):
             return JsonResponse(
                 {"success": False, "error": "GEMINI_API_KEY environment variable not set"},
                 status=500
             )
         
-        if not os.getenv("RUNWAYML_API_SECRET"):
+        if getattr(settings, "PIPELINE_OUTPUT", "video") == "video" and not os.getenv("RUNWAYML_API_SECRET"):
             return JsonResponse(
-                {"success": False, "error": "RUNWAYML_API_SECRET environment variable not set"},
+                {"success": False, "error": "RUNWAYML_API_SECRET environment variable not set (required for video mode)"},
                 status=500
             )
         
