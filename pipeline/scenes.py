@@ -104,7 +104,7 @@ Video generation – visuals that support the story:
 - Goal: Each scene's visual should help the viewer understand and relate to what they're hearing and what the paper is about. Prefer visuals that clearly illustrate the topic when that helps comprehension.
 - Content: Literal, topic-relevant imagery is fine when it matches the narration: e.g. medical or lab equipment, procedures, organisms, data, environments—as long as they fit the scene and the paper.
 - Style: You can use either literal visuals (e.g. "researcher pipetting in a lab", "MRI machine", "bacteria under microscope") or more abstract or metaphorical visuals when that better conveys the idea. Choose whatever best supports understanding.
-- Still avoid: Identifiable real people, specific brands, or copyrighted characters so the video stays safe and reusable.
+- AVOID identifiable real people, specific brands, or copyrighted characters so the video stays safe and reusable.
 
 For each scene, write a clear Veo video generation prompt that describes the visual content and supports what the narrator is saying.
 
