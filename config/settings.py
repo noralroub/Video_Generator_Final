@@ -86,6 +86,10 @@ VIDEO_ACCESS_CODE = os.getenv("VIDEO_ACCESS_CODE", None)
 # Set SIMULATION_MODE=True in your .env file or environment to enable
 SIMULATION_MODE = os.getenv("SIMULATION_MODE", "False") == "True"
 
+# Pipeline output format: "video" (Veo clips + merge) or "presentation" (HTML with synced audio)
+# When "presentation", the web UI and Celery task run the HTML pipeline (no Runway/Veo)
+PIPELINE_OUTPUT = os.getenv("PIPELINE_OUTPUT", "video")
+
 INSTALLED_APPS = [
     "django.contrib.admin",
     "django.contrib.auth",
