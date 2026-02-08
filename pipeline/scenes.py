@@ -100,14 +100,13 @@ Guidelines:
 - Focus on the human/real-world angle, not just the science
 - Vary sentence structure to maintain interest
 
-Video Generation Content Policy:
-- AVOID prompts with medical imagery: pills, syringes, needles, medical procedures
-- AVOID prompts with identifiable people, brands, or copyrighted material
-- Use abstract or metaphorical visuals instead of literal medical equipment
-- Focus on emotions, environments, and general human activities
-- Example: Instead of "person holding a syringe", use "person looking concerned while making a health decision"
+Video generation – visuals that support the story:
+- Goal: Each scene's visual should help the viewer understand and relate to what they're hearing and what the paper is about. Prefer visuals that clearly illustrate the topic when that helps comprehension.
+- Content: Literal, topic-relevant imagery is fine when it matches the narration: e.g. medical or lab equipment, procedures, organisms, data, environments—as long as they fit the scene and the paper.
+- Style: You can use either literal visuals (e.g. "researcher pipetting in a lab", "MRI machine", "bacteria under microscope") or more abstract or metaphorical visuals when that better conveys the idea. Choose whatever best supports understanding.
+- Still avoid: Identifiable real people, specific brands, or copyrighted characters so the video stays safe and reusable.
 
-For each scene, write a clear Veo video generation prompt that describes the visual content.
+For each scene, write a clear Veo video generation prompt that describes the visual content and supports what the narrator is saying.
 
 Return ONLY a JSON object with this structure:
 {{
@@ -128,7 +127,7 @@ Return ONLY a JSON object with this structure:
     while retry_count < max_retries:
         try:
             response = client.models.generate_content(
-                model="gemini-2.0-flash-exp",
+                model="gemini-2.5-flash",
                 contents=prompt,
                 config=types.GenerateContentConfig(response_mime_type="application/json"),
             )
