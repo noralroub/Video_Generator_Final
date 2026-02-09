@@ -546,6 +546,7 @@ def generate_presentation_cmd(output_dir: str, audio_src: str) -> None:
             output_path=html_path,
             audio_metadata_path=audio_metadata_path if audio_metadata_path.exists() else None,
             audio_src=audio_src,
+            paper_path=output_path / "paper.json",
         )
         click.secho(f"✓ Presentation written to {html_path}", fg="green", bold=True)
     except Exception as e:

@@ -153,6 +153,7 @@ def _generate_presentation_step(output_dir: Path) -> None:
         output_path=output_path,
         audio_metadata_path=audio_metadata_path if audio_metadata_path.exists() else None,
         audio_src="audio.wav",
+        paper_path=output_dir / "paper.json",
     )
     logger.info("Generated presentation.html with embedded audio and synced slide timing")
 
