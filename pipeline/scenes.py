@@ -4,9 +4,9 @@ import json
 import logging
 import os
 import re
-from dataclasses import dataclass, asdict
+from dataclasses import dataclass, asdict, fields
 from pathlib import Path
-from typing import Literal, List
+from typing import List, Literal, Optional
 
 from google import genai
 from google.genai import types
@@ -24,6 +24,8 @@ class Scene:
     text: str
     visual_type: Literal["generated"]
     visual_content: str
+    key_stat: Optional[str] = None
+    bullets: Optional[List[str]] = None
 
 
 def generate_scenes(paper_data: dict, api_key: str | None = None) -> List[Scene]:
@@ -108,13 +110,19 @@ Video generation – visuals that support the story:
 
 For each scene, write a clear Veo video generation prompt that describes the visual content and supports what the narrator is saying.
 
+Optional animation data (include only when they fit the scene):
+- key_stat: If the scene mentions a clear statistic or number (e.g. "3x more", "50%", "12"), add it as a short string for an on-screen counter.
+- bullets: If the scene has list-like or multi-point content, add a list of 2-5 short bullet strings for staggered reveal.
+
 Return ONLY a JSON object with this structure:
 {{
   "scenes": [
     {{
       "text": "Short, engaging sentence for narration",
       "visual_type": "generated",
-      "visual_content": "detailed video generation prompt"
+      "visual_content": "detailed video generation prompt",
+      "key_stat": "optional e.g. 3x or 50% or omit",
+      "bullets": ["optional", "list of", "short strings or omit"]
     }}
   ]
 }}"""
@@ -217,11 +225,17 @@ Return ONLY a JSON object with this structure:
                     )
                     scene_data["visual_type"] = "generated"
 
+                key_stat = scene_data.get("key_stat")
+                bullets_raw = scene_data.get("bullets")
+                bullets = bullets_raw if isinstance(bullets_raw, list) else None
+
                 scenes.append(
                     Scene(
                         text=scene_data["text"],
                         visual_type=scene_data["visual_type"],
                         visual_content=scene_data["visual_content"],
+                        key_stat=key_stat if key_stat else None,
+                        bullets=bullets,
                     )
                 )
 
@@ -302,7 +316,11 @@ def load_scenes(input_path: Path) -> List[Scene]:
         with open(input_path, "r", encoding="utf-8") as f:
             scenes_data = json.load(f)
 
-        scenes = [Scene(**scene_data) for scene_data in scenes_data]
+        known = {f.name for f in fields(Scene)}
+        scenes = [
+            Scene(**{k: v for k, v in scene_data.items() if k in known})
+            for scene_data in scenes_data
+        ]
         logger.info(f"Loaded {len(scenes)} scenes from {input_path}")
 
         return scenes

@@ -99,6 +99,33 @@
         }
         .control-btn:hover { transform: scale(1.1); }
         #narration { display: none; }
+        .key-stat { font-size: 3rem; font-weight: 800; margin-bottom: 8px; opacity: 0; }
+        .key-stat.animate { animation: countIn 1s ease-out forwards; }
+        @keyframes countIn {
+            0% { opacity: 0; transform: scale(0.8); }
+            100% { opacity: 1; transform: scale(1); }
+        }
+        .stat-bar { width: 80%; max-width: 200px; height: 8px; background: rgba(255,255,255,0.3); border-radius: 4px; margin: 12px auto; overflow: hidden; }
+        .stat-bar-fill { height: 100%; width: 0%; background: white; border-radius: 4px; transition: width 1s ease-out; }
+        .stat-bar-fill.animate { width: 100%; }
+        .content-bullets { list-style: none; text-align: left; margin-top: 16px; }
+        .content-bullets li { opacity: 0; transform: translateX(-20px); animation: bulletIn 0.4s ease-out forwards; }
+        .content-bullets li:nth-child(1) { animation-delay: 0.1s; }
+        .content-bullets li:nth-child(2) { animation-delay: 0.25s; }
+        .content-bullets li:nth-child(3) { animation-delay: 0.4s; }
+        .content-bullets li:nth-child(4) { animation-delay: 0.55s; }
+        .content-bullets li:nth-child(5) { animation-delay: 0.7s; }
+        @keyframes bulletIn {
+            0% { opacity: 0; transform: translateX(-20px); }
+            100% { opacity: 1; transform: translateX(0); }
+        }
+        .scene-emoji { font-size: 2.5rem; margin-bottom: 12px; opacity: 0; }
+        .scene-emoji.animate { animation: emojiPop 0.6s ease-out forwards; }
+        @keyframes emojiPop {
+            0% { opacity: 0; transform: scale(0); }
+            70% { transform: scale(1.15); }
+            100% { opacity: 1; transform: scale(1); }
+        }
     </style>
 </head>
 <body>
@@ -114,7 +141,19 @@
             </div>
             {% elif scene.slide_type == 'content' %}
             <div class="content-card">
+                {% if scene.key_stat %}
+                <div class="scene-emoji" data-scene-index="{{ loop.index }}">📊</div>
+                <div class="key-stat" data-target="{{ scene.key_stat }}" data-scene-index="{{ loop.index }}">0</div>
+                <div class="stat-bar"><div class="stat-bar-fill" data-scene-index="{{ loop.index }}"></div></div>
+                {% endif %}
                 <p>{{ scene.text }}</p>
+                {% if scene.bullets %}
+                <ul class="content-bullets">
+                    {% for bullet in scene.bullets %}
+                    <li>{{ bullet }}</li>
+                    {% endfor %}
+                </ul>
+                {% endif %}
             </div>
             {% elif scene.slide_type == 'cta' %}
             <h2 class="cta-title">{{ scene.text.split('.')[0] if '.' in scene.text else scene.text }}</h2>
@@ -153,9 +192,54 @@
             var currentTime = 0;
             var isPlaying = false;
             var interval = null;
+            function parseStatTarget(str) {
+                if (!str || typeof str !== 'string') return { num: 0, suffix: '' };
+                var m = str.match(/^(\d+(?:\.\d+)?)\s*(.*)$/);
+                if (m) return { num: parseFloat(m[1], 10), suffix: m[2] || '' };
+                return { num: 0, suffix: str };
+            }
+            function runCountUp(el, targetStr, durationMs) {
+                var start = 0;
+                var parsed = parseStatTarget(targetStr);
+                var end = parsed.num;
+                var suffix = parsed.suffix;
+                var startTime = null;
+                function step(timestamp) {
+                    if (!startTime) startTime = timestamp;
+                    var elapsed = timestamp - startTime;
+                    var t = Math.min(1, elapsed / durationMs);
+                    var eased = t < 0.5 ? 2 * t * t : 1 - Math.pow(-2 * t + 2, 2) / 2;
+                    var current = start + (end - start) * eased;
+                    el.textContent = Math.round(current) + suffix;
+                    if (t < 1) requestAnimationFrame(step);
+                }
+                requestAnimationFrame(step);
+            }
             function showScene(num) {
                 currentScene = num;
-                scenes.forEach(function(s, i) { s.classList.toggle('active', i + 1 === num); });
+                document.querySelectorAll('.key-stat.animate, .stat-bar-fill.animate, .scene-emoji.animate').forEach(function(el) {
+                    el.classList.remove('animate');
+                });
+                scenes.forEach(function(s, i) {
+                    var isActive = i + 1 === num;
+                    s.classList.toggle('active', isActive);
+                    if (isActive) {
+                        var keyStat = s.querySelector('.key-stat');
+                        var barFill = s.querySelector('.stat-bar-fill');
+                        if (keyStat && keyStat.dataset.target) {
+                            keyStat.textContent = '0' + (parseStatTarget(keyStat.dataset.target).suffix || '');
+                            keyStat.classList.add('animate');
+                            runCountUp(keyStat, keyStat.dataset.target, 1000);
+                        }
+                        if (barFill) {
+                            barFill.classList.add('animate');
+                        }
+                        var emoji = s.querySelector('.scene-emoji');
+                        if (emoji) {
+                            emoji.classList.add('animate');
+                        }
+                    }
+                });
             }
             function updateProgress() {
                 var pct = totalDuration > 0 ? (currentTime / totalDuration) * 100 : 0;
@@ -207,6 +291,7 @@
                     if (isPlaying) { pause(); currentTime = 0; currentScene = 1; showScene(1); updateProgress(); }
                 });
             }
+            showScene(1);
         })();
     </script>
 </body>

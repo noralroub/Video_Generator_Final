@@ -53,11 +53,16 @@ def _prepare_scenes(script_path: Path, audio_metadata_path: Optional[Path] = Non
             slide_type = "cta"
         else:
             slide_type = "content"
-        scene_list.append({
+        entry = {
             "text": scene.text,
             "duration_seconds": scene_durations[i] if i < len(scene_durations) else DEFAULT_SCENE_DURATION,
             "slide_type": slide_type,
-        })
+        }
+        if scene.key_stat:
+            entry["key_stat"] = scene.key_stat
+        if scene.bullets:
+            entry["bullets"] = scene.bullets
+        scene_list.append(entry)
 
     title = scene_list[0]["text"] if scene_list else "Presentation"
     if len(title) > 80:
