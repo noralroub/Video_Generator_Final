@@ -22,7 +22,7 @@ from scenes import generate_scenes, save_scenes, load_scenes
 from audio import generate_audio, save_audio_metadata
 from video import generate_videos, save_video_metadata
 from pipeline import orchestrate_pipeline, PipelineError
-from presentation import render_presentation
+from presentation import render_presentation_claude
 
 logging.basicConfig(
     level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s"
@@ -541,7 +541,7 @@ def generate_presentation_cmd(output_dir: str, audio_src: str) -> None:
     html_path = output_path / "presentation.html"
     audio_metadata_path = output_path / "audio_metadata.json"
     try:
-        render_presentation(
+        render_presentation_claude(
             script_path=script_path,
             output_path=html_path,
             audio_metadata_path=audio_metadata_path if audio_metadata_path.exists() else None,

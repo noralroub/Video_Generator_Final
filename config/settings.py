@@ -12,6 +12,7 @@ import dj_database_url
 # REQUIRED:
 #   - GEMINI_API_KEY: Google Gemini API key (for scene generation & TTS)
 #   - RUNWAYML_API_SECRET: RunwayML API key (for video generation)
+#   - ANTHROPIC_API_KEY: Anthropic API key (for Claude Haiku when generating HTML presentations; required when PIPELINE_OUTPUT=presentation)
 #   - VIDEO_ACCESS_CODE: Access code required to generate videos (security)
 #   - SECRET_KEY: Django secret key (generate with get_random_secret_key())
 #

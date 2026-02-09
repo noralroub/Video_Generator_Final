@@ -8,7 +8,7 @@ from typing import Callable, Optional
 
 from audio import generate_audio, save_audio_metadata
 from pubmed import fetch_paper
-from presentation import render_presentation
+from presentation import render_presentation_claude
 from scenes import generate_scenes, save_scenes, load_scenes
 from video import generate_videos, save_video_metadata
 
@@ -144,18 +144,18 @@ def check_presentation_generated(output_dir: Path) -> bool:
 
 
 def _generate_presentation_step(output_dir: Path) -> None:
-    """Execute the generate-presentation step."""
+    """Execute the generate-presentation step (Claude Haiku for slide content)."""
     script_path = output_dir / "script.json"
     output_path = output_dir / "presentation.html"
     audio_metadata_path = output_dir / "audio_metadata.json"
-    render_presentation(
+    render_presentation_claude(
         script_path=script_path,
         output_path=output_path,
         audio_metadata_path=audio_metadata_path if audio_metadata_path.exists() else None,
         audio_src="audio.wav",
         paper_path=output_dir / "paper.json",
     )
-    logger.info("Generated presentation.html with embedded audio and synced slide timing")
+    logger.info("Generated presentation.html with Claude and synced audio")
 
 
 

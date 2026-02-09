@@ -11,6 +11,16 @@ from scenes import load_scenes
 
 logger = logging.getLogger(__name__)
 
+# Placeholder contract: must match claude_presentation.py. Python replaces these
+# in Claude's full HTML with title, audio_src, scene_durations JSON, total_duration JSON.
+from claude_presentation import (
+    PLACEHOLDER_AUDIO_SRC,
+    PLACEHOLDER_SCENE_DURATIONS_JSON,
+    PLACEHOLDER_TITLE,
+    PLACEHOLDER_TOTAL_DURATION_JSON,
+    generate_presentation_html,
+)
+
 # Default duration per scene when no audio metadata (seconds)
 DEFAULT_SCENE_DURATION = 6.0
 
@@ -103,17 +113,28 @@ def _download_figures_to_output(scene_list: list[dict[str, Any]], output_dir: Pa
         fig_index += 1
 
 
-def _prepare_scenes(script_path: Path, audio_metadata_path: Optional[Path] = None) -> tuple[list[dict[str, Any]], list[float], float, str]:
+def render_presentation_claude(
+    script_path: Path,
+    output_path: Path,
+    audio_metadata_path: Optional[Path] = None,
+    audio_src: str = "audio.wav",
+    paper_path: Optional[Path] = None,
+) -> None:
     """
-    Load script and optional audio metadata; return scenes for template, durations, total_duration, title.
+    Render an HTML presentation: Claude generates full HTML with placeholders;
+    we replace placeholders with title, audio_src, scene_durations, total_duration and write the file.
     """
+    html = generate_presentation_html(script_path, paper_path)
+
     scenes = load_scenes(script_path)
     if not scenes:
         raise ValueError("Script has no scenes")
+    title = scenes[0].text if scenes else "Presentation"
+    if len(title) > 80:
+        title = title[:77] + "..."
 
     if audio_metadata_path and audio_metadata_path.exists():
         scene_durations, total_duration = _load_audio_durations(audio_metadata_path)
-        # Pad or trim to match scene count
         n = len(scenes)
         if len(scene_durations) < n:
             scene_durations = scene_durations + [DEFAULT_SCENE_DURATION] * (n - len(scene_durations))
@@ -124,82 +145,13 @@ def _prepare_scenes(script_path: Path, audio_metadata_path: Optional[Path] = Non
         scene_durations = [DEFAULT_SCENE_DURATION] * len(scenes)
         total_duration = sum(scene_durations)
 
-    # Build list of scene dicts: text, duration_seconds, slide_type (hook | content | cta)
-    scene_list: list[dict[str, Any]] = []
-    for i, scene in enumerate(scenes):
-        if i == 0:
-            slide_type = "hook"
-        elif i == len(scenes) - 1:
-            slide_type = "cta"
-        else:
-            slide_type = "content"
-        entry = {
-            "text": scene.text,
-            "duration_seconds": scene_durations[i] if i < len(scene_durations) else DEFAULT_SCENE_DURATION,
-            "slide_type": slide_type,
-        }
-        if scene.key_stat:
-            entry["key_stat"] = scene.key_stat
-        if scene.bullets:
-            entry["bullets"] = scene.bullets
-        scene_list.append(entry)
-
-    title = scene_list[0]["text"] if scene_list else "Presentation"
-    if len(title) > 80:
-        title = title[:77] + "..."
-
-    return scene_list, scene_durations, total_duration, title
-
-
-def render_presentation(
-    script_path: Path,
-    output_path: Path,
-    audio_metadata_path: Optional[Path] = None,
-    audio_src: str = "audio.wav",
-    paper_path: Optional[Path] = None,
-) -> None:
-    """
-    Render an HTML presentation from script.json and optional audio metadata.
-
-    Args:
-        script_path: Path to script.json (from generate-script step).
-        output_path: Path to write presentation.html.
-        audio_metadata_path: Optional path to audio_metadata.json (for scene durations).
-        audio_src: Filename or URL for the audio element (e.g. "audio.wav").
-        paper_path: Optional path to paper.json; if set and file exists, figures are loaded
-            and assigned to content scenes (figure_url, figure_caption).
-    """
-    try:
-        from jinja2 import Environment, FileSystemLoader, select_autoescape
-    except ImportError:
-        raise ImportError("jinja2 is required for presentation generation. Install with: pip install jinja2") from None
-
-    scene_list, scene_durations, total_duration, title = _prepare_scenes(script_path, audio_metadata_path)
-    if paper_path:
-        figures = _load_figures(paper_path)
-        if figures:
-            _apply_figures_to_scenes(scene_list, figures)
-            output_dir = output_path.parent
-            _download_figures_to_output(scene_list, output_dir)
-
-    template_dir = Path(__file__).resolve().parent / "templates"
-    if not template_dir.exists():
-        raise FileNotFoundError(f"Template directory not found: {template_dir}")
-
-    env = Environment(
-        loader=FileSystemLoader(str(template_dir)),
-        autoescape=select_autoescape(("html", "xml")),
-    )
-    template = env.get_template("presentation.html.j2")
-
-    html = template.render(
-        title=title,
-        scenes=scene_list,
-        scene_durations=scene_durations,
-        total_duration=total_duration,
-        audio_src=audio_src,
+    html = (
+        html.replace(PLACEHOLDER_TITLE, title)
+        .replace(PLACEHOLDER_AUDIO_SRC, audio_src)
+        .replace(PLACEHOLDER_SCENE_DURATIONS_JSON, json.dumps(scene_durations))
+        .replace(PLACEHOLDER_TOTAL_DURATION_JSON, json.dumps(total_duration))
     )
 
     output_path.parent.mkdir(parents=True, exist_ok=True)
     output_path.write_text(html, encoding="utf-8")
-    logger.info(f"Rendered presentation to {output_path} ({len(scene_list)} scenes, {total_duration:.1f}s)")
+    logger.info(f"Rendered Claude presentation to {output_path} ({len(scenes)} scenes, {total_duration:.1f}s)")
