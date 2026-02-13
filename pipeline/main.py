@@ -18,9 +18,9 @@ except ImportError:
     pass  # python-dotenv not installed, skip
 
 from pubmed import fetch_paper, PMCNotFoundError
-from scenes import generate_scenes, save_scenes, load_scenes
+from scenes import save_scenes, load_scenes
+from html_video import generate_script_and_html, run_html_video_step
 from audio import generate_audio, save_audio_metadata
-from video import generate_videos, save_video_metadata
 from pipeline import orchestrate_pipeline, PipelineError
 
 logging.basicConfig(
@@ -158,12 +158,12 @@ def fetch_paper_cmd(paper_id, output_dir):
 @cli.command()
 @click.argument("paper_dir", type=click.Path(exists=True))
 def generate_script(paper_dir):
-    """Generate video script from paper data in PAPER_DIR.
+    """Generate script and motion-graphics HTML from paper data (Claude).
 
     PAPER_DIR: Directory containing paper.json (from fetch-paper command)
 
-    This will generate a script.json file with 4-10 scenes for video creation.
-    Each scene contains narration text and a video generation prompt.
+    Writes script.json and motion_video.html (with placeholder durations).
+    Run generate-audio next, then generate-videos to produce final_video.mp4.
 
     Example:
         python main.py generate-script ./my_paper
@@ -179,44 +179,28 @@ def generate_script(paper_dir):
             click.echo("Run 'fetch-paper' command first to download paper data")
             raise click.Abort()
 
-        # Load paper data
         click.echo(f"Loading paper from {paper_file}...")
         with open(paper_file, "r", encoding="utf-8") as f:
             paper_data = json.load(f)
 
         click.echo(f"Paper: {paper_data['title']}")
-        click.echo(f"Generating scenes using Gemini...")
-
-        # Generate scenes
-        scene_list = generate_scenes(paper_data)
-
-        # Save to script.json
+        click.echo("Generating script and motion HTML with Claude...")
+        generate_script_and_html(paper_data, paper_path)
         script_file = paper_path / "script.json"
-        save_scenes(scene_list, script_file)
+        scene_list = load_scenes(script_file)
 
-        click.secho(f"\n✓ Generated {len(scene_list)} scenes", fg="green", bold=True)
-        click.secho(f"✓ Saved to: {script_file}", fg="green", bold=True)
+        click.secho(f"\n✓ Generated {len(scene_list)} scenes and motion_video.html", fg="green", bold=True)
+        click.secho(f"✓ Saved to: {script_file}, {paper_path / 'motion_video.html'}", fg="green", bold=True)
 
-        # Preview scenes
         click.echo("\n" + "=" * 60)
         click.echo("SCENE PREVIEW")
         click.echo("=" * 60)
-
         for i, scene in enumerate(scene_list, 1):
-            click.echo(f"\nScene {i}:")
-            click.echo(f"  Text: {scene.text}")
-            click.echo(f"  Visual: {scene.visual_type}")
-            prompt_preview = (
-                scene.visual_content[:100] + "..."
-                if len(scene.visual_content) > 100
-                else scene.visual_content
-            )
-            click.echo(f"  Prompt: {prompt_preview}")
-
+            click.echo(f"\nScene {i}: {scene.text[:80]}...")
         click.echo("\n" + "=" * 60)
 
     except Exception as e:
-        logging.exception("Error generating script")
+        logging.exception("Error generating script and HTML")
         click.secho(f"✗ Error: {e}", fg="red", err=True)
         raise click.Abort()
 
@@ -304,97 +288,26 @@ def generate_audio_cmd(paper_dir, voice):
 
 
 @cli.command()
-@click.argument("metadata_file", type=click.Path(exists=True))
-@click.option(
-    "--output-dir",
-    "-o",
-    default=None,
-    help="Output directory for video clips (default: clips/ in same directory as metadata)",
-)
-@click.option(
-    "--max-workers",
-    "-w",
-    default=5,
-    type=int,
-    help="Maximum parallel video generations (default: 5)",
-)
-@click.option(
-    "--poll-interval",
-    "-p",
-    default=1,
-    type=int,
-    help="Seconds between status checks (default: 1)",
-)
-def generate_videos_cmd(metadata_file, output_dir, max_workers, poll_interval):
-    """Generate video clips from audio metadata.
+@click.argument("paper_dir", type=click.Path(exists=True))
+def generate_videos_cmd(paper_dir):
+    """Produce final video from HTML (inject durations, record, mux audio).
 
-    METADATA_FILE: Path to audio_metadata.json (from generate-audio command)
+    PAPER_DIR: Directory containing motion_video.html, audio_metadata.json, audio.wav
+    (from generate-script and generate-audio commands).
 
-    This will generate video clips for all scenes in parallel using Runway Veo 3.1 Fast.
-    Videos are generated with 9:16 aspect ratio (portrait/vertical) for TikTok.
-
-    Output:
-    - Individual video clips (scene_00.mp4, scene_01.mp4, etc.)
-    - video_metadata.json with clip information
+    Output: final_video.mp4 in PAPER_DIR.
 
     Example:
-        python main.py generate-videos ./my_paper/audio_metadata.json
-        python main.py generate-videos ./my_paper/audio_metadata.json -o ./my_paper/clips
+        python main.py generate-videos ./my_paper
     """
     try:
-        metadata_path = Path(metadata_file)
-
-        if output_dir:
-            output_path = Path(output_dir)
-        else:
-            output_path = None  # Will default to clips/ subdirectory
-
-        click.echo(f"Loading metadata from {metadata_path}...")
-        click.echo(f"Maximum parallel generations: {max_workers}")
-        click.echo(f"Poll interval: {poll_interval}s")
-        click.echo("\nGenerating video clips with Runway Veo 3.1 Fast...")
-        click.echo("(This may take several minutes depending on number of scenes...)")
-        click.echo("")
-
-        # Generate videos
-        result = generate_videos(
-            metadata_path,
-            output_dir=output_path,
-            max_workers=max_workers,
-            poll_interval=poll_interval,
-        )
-
-        # Save video metadata
-        video_metadata_file = Path(result.output_dir) / "video_metadata.json"
-        save_video_metadata(result, video_metadata_file)
-
-        click.secho(f"\n✓ Video generation complete!", fg="green", bold=True)
-        click.echo(f"  Total clips: {result.total_clips}")
-        click.echo(f"  Output directory: {result.output_dir}")
-        click.secho(f"\n✓ Saved metadata to:", fg="green", bold=True)
-        click.echo(f"  - {video_metadata_file}")
-
-        # Display clip summary
-        click.echo("\n" + "=" * 60)
-        click.echo("GENERATED CLIPS")
-        click.echo("=" * 60)
-
-        for clip in result.clips:
-            click.echo(f"\nScene {clip.scene_index}: {clip.visual_type}")
-            if clip.clip_path:
-                click.echo(f"  File: {clip.clip_path}")
-                click.echo(f"  Duration: {clip.duration:.2f}s")
-                prompt_preview = (
-                    clip.prompt[:80] + "..." if len(clip.prompt) > 80 else clip.prompt
-                )
-                click.echo(f"  Prompt: {prompt_preview}")
-            else:
-                click.echo(f"  (Figure - will be added during composition)")
-
-        click.echo("\n" + "=" * 60)
-
+        output_path = Path(paper_dir)
+        click.echo(f"Running HTML video step in {output_path}...")
+        click.echo("(Injecting durations, recording viewport, muxing audio...)")
+        run_html_video_step(output_path)
+        click.secho(f"\n✓ Video complete: {output_path / 'final_video.mp4'}", fg="green", bold=True)
     except Exception as e:
-        logging.exception("Error generating videos")
+        logging.exception("Error generating video from HTML")
         click.secho(f"✗ Error: {e}", fg="red", err=True)
         raise click.Abort()
 
@@ -412,7 +325,7 @@ def generate_videos_cmd(metadata_file, output_dir, max_workers, poll_interval):
     type=click.Choice(
         [
             "fetch-paper",
-            "generate-script",
+            "generate-script-and-html",
             "generate-audio",
             "generate-videos",
         ]
@@ -447,12 +360,11 @@ def generate_video(
 
     This command orchestrates the entire pipeline:
     1. fetch-paper: Download paper from PubMed Central
-    2. generate-script: Create video script with scenes
-    3. generate-audio: Generate TTS audio for each scene
-    4. generate-videos: Create video clips with Runway Veo 3.1 Fast
+    2. generate-script-and-html: Create script and motion HTML with Claude
+    3. generate-audio: Generate TTS audio for each scene (Gemini)
+    4. generate-videos: Inject durations, record HTML, mux audio to final_video.mp4
 
-    By default, the pipeline is idempotent - it will skip steps that
-    have already been completed. Use --no-skip-existing to force
+    By default, the pipeline is idempotent. Use --no-skip-existing to force
     re-execution of all steps.
 
     Examples:
@@ -463,8 +375,8 @@ def generate_video(
         # Generate with custom voice
         python main.py generate-video PMC10979640 tmp/PMC10979640 --voice Puck
 
-        # Stop after script generation (for testing)
-        python main.py generate-video PMC10979640 tmp/PMC10979640 --stop-after generate-script
+        # Stop after script+HTML (for testing)
+        python main.py generate-video PMC10979640 tmp/PMC10979640 --stop-after generate-script-and-html
 
         # Force re-generation of everything
         python main.py generate-video PMC10979640 tmp/PMC10979640 --no-skip-existing
@@ -484,12 +396,11 @@ def generate_video(
         click.secho(
             f"✓ Pipeline complete! Videos in {output_path}", fg="green", bold=True
         )
-        if not no_merge:
-            click.secho(
-                f"✓ Final merged video: {output_path}/final_video.mp4",
-                fg="green",
-                bold=True,
-            )
+        click.secho(
+            f"✓ Final video: {output_path}/final_video.mp4",
+            fg="green",
+            bold=True,
+        )
     except PipelineError as e:
         click.secho(f"✗ Pipeline failed: {e}", fg="red", err=True)
         raise click.Abort()

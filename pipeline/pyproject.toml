@@ -5,9 +5,11 @@ description = "Add your description here"
 readme = "README.md"
 requires-python = ">=3.12"
 dependencies = [
+    "anthropic>=0.39.0",
     "click>=8.3.0",
     "google-cloud-texttospeech>=2.33.0",
     "google-genai>=1.48.0",
+    "playwright>=1.49.0",
     "pubmed-parser>=0.5.1",
     "pydub>=0.25.1",
     "runwayml>=3.21.0",

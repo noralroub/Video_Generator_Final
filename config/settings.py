@@ -10,8 +10,9 @@ import dj_database_url
 # This application requires the following environment variables:
 #
 # REQUIRED:
-#   - GEMINI_API_KEY: Google Gemini API key (for scene generation & TTS)
-#   - RUNWAYML_API_SECRET: RunwayML API key (for video generation)
+#   - GEMINI_API_KEY: Google Gemini API key (for TTS)
+#   - ANTHROPIC_API_KEY: Anthropic API key (for script + motion HTML generation)
+#   - RUNWAYML_API_SECRET: RunwayML API key (optional; not used by HTML pipeline)
 #   - VIDEO_ACCESS_CODE: Access code required to generate videos (security)
 #   - SECRET_KEY: Django secret key (generate with get_random_secret_key())
 #

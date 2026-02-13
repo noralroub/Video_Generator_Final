@@ -49,8 +49,8 @@ def _parse_pipeline_progress(line: str, current_progress: dict) -> Optional[dict
             "complete": "complete",  # "✓ Complete" or "✓ Already complete, skipping"
             "percent": 25,
         },
-        "generate-script": {
-            "start": "step: generate-script",
+        "generate-script-and-html": {
+            "start": "step: generate-script-and-html",
             "complete": "complete",
             "percent": 50,
         },

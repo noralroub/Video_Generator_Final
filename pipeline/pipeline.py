@@ -8,8 +8,8 @@ from typing import Callable, Optional
 
 from audio import generate_audio, save_audio_metadata
 from pubmed import fetch_paper
-from scenes import generate_scenes, save_scenes, load_scenes
-from video import generate_videos, save_video_metadata
+from scenes import load_scenes, save_scenes
+from html_video import generate_script_and_html, run_html_video_step
 
 logger = logging.getLogger(__name__)
 
@@ -38,10 +38,11 @@ def check_paper_fetched(output_dir: Path) -> bool:
 
 
 
-def check_script_generated(output_dir: Path) -> bool:
-    """Check if script has been generated."""
+def check_script_and_html_generated(output_dir: Path) -> bool:
+    """Check if script and motion-graphics HTML have been generated (Claude step)."""
     script_json = output_dir / "script.json"
-    return script_json.exists()
+    motion_html = output_dir / "motion_video.html"
+    return script_json.exists() and motion_html.exists()
 
 
 def check_audio_generated(output_dir: Path) -> bool:
@@ -81,60 +82,9 @@ def check_audio_generated(output_dir: Path) -> bool:
 
 
 def check_videos_generated(output_dir: Path) -> bool:
-    """Check if videos have been generated for all scenes.
-    
-    More robust check: verifies that all expected video clips exist
-    based on the script, not just a marker file.
-    """
-    # First check for marker file (fast path)
-    clips_dir = output_dir / "clips"
-    marker_path = clips_dir / ".videos_complete"
-    if marker_path.exists():
-        return True
-    
-    # If no marker, check if all expected videos exist based on script
-    script_file = output_dir / "script.json"
-    if not script_file.exists():
-        return False
-    
-    # Load script to determine how many scenes we need
-    scenes = load_scenes(script_file)
-    if not scenes:
-        return False
-    
-    # Check if all expected video clips exist
-    expected_count = len(scenes)
-    existing_clips = list(clips_dir.glob("scene_*.mp4")) if clips_dir.exists() else []
-    
-    # Count unique scene clips (scene_00.mp4, scene_01.mp4, etc.)
-    scene_indices = set()
-    for clip_path in existing_clips:
-        try:
-            # Extract scene number from filename like "scene_00.mp4"
-            name = clip_path.stem  # "scene_00"
-            if name.startswith("scene_"):
-                scene_num = int(name.split("_")[1])
-                scene_indices.add(scene_num)
-        except (ValueError, IndexError):
-            continue
-    
-    # Check if we have all required clips
-    all_clips_exist = len(scene_indices) >= expected_count and all(
-        i in scene_indices for i in range(expected_count)
-    )
-    
-    if all_clips_exist:
-        logger.info(
-            f"All {expected_count} video clips found (even without marker file), "
-            "skipping video generation"
-        )
-        # Create marker file for faster future checks
-        if not marker_path.exists():
-            marker_path.parent.mkdir(parents=True, exist_ok=True)
-            marker_path.touch()
-            logger.debug(f"Created missing marker file: {marker_path}")
-    
-    return all_clips_exist
+    """Check if final video has been generated (HTML pipeline: inject + record + mux)."""
+    final_video = output_dir / "final_video.mp4"
+    return final_video.exists()
 
 
 
@@ -173,10 +123,10 @@ def orchestrate_pipeline(
             execute=lambda: fetch_paper(pmid, str(output_dir)),
         ),
         PipelineStep(
-            name="generate-script",
-            description="Generating video script with scenes",
-            check_completion=lambda: check_script_generated(output_dir),
-            execute=lambda: _generate_script_step(output_dir),
+            name="generate-script-and-html",
+            description="Generating script and motion-graphics HTML with Claude",
+            check_completion=lambda: check_script_and_html_generated(output_dir),
+            execute=lambda: _generate_script_and_html_step(output_dir),
         ),
         PipelineStep(
             name="generate-audio",
@@ -186,9 +136,9 @@ def orchestrate_pipeline(
         ),
         PipelineStep(
             name="generate-videos",
-            description="Generating videos for all scenes",
+            description="Injecting durations, recording HTML, muxing audio",
             check_completion=lambda: check_videos_generated(output_dir),
-            execute=lambda: _generate_videos_step(output_dir, max_workers, merge),
+            execute=lambda: _generate_html_videos_step(output_dir),
         ),
     ]
 
@@ -226,21 +176,13 @@ def orchestrate_pipeline(
     logger.info(f"Output files in: {output_dir}")
 
 
-def _generate_script_step(output_dir: Path) -> None:
-    """Execute the generate-script step."""
-    # Load paper data
+def _generate_script_and_html_step(output_dir: Path) -> None:
+    """Execute the generate-script-and-html step (Claude: script + motion HTML)."""
     paper_file = output_dir / "paper.json"
     with open(paper_file, "r", encoding="utf-8") as f:
         paper_data = json.load(f)
-
-    # Generate scenes
-    scene_list = generate_scenes(paper_data)
-
-    # Save to script.json
-    script_file = output_dir / "script.json"
-    save_scenes(scene_list, script_file)
-
-    logger.info(f"Generated {len(scene_list)} scenes")
+    generate_script_and_html(paper_data, output_dir)
+    logger.info("Generated script and motion_video.html")
 
 
 def _generate_audio_step(output_dir: Path, voice: str) -> None:
@@ -259,26 +201,7 @@ def _generate_audio_step(output_dir: Path, voice: str) -> None:
     logger.info(f"Generated audio: {result.total_duration:.2f}s with voice '{voice}'")
 
 
-def _generate_videos_step(
-    output_dir: Path, max_workers: int, merge: bool = True
-) -> None:
-    """Execute the generate-videos step."""
-    # Load audio metadata
-    metadata_path = output_dir / "audio_metadata.json"
-
-    # Generate videos with merging
-    result = generate_videos(
-        metadata_path,
-        output_dir=None,
-        max_workers=max_workers,
-        poll_interval=1,
-        merge=merge,
-    )
-
-    # Save video metadata
-    video_metadata_file = Path(result.output_dir) / "video_metadata.json"
-    save_video_metadata(result, video_metadata_file)
-
-    logger.info(f"Generated {result.total_clips} video clips")
-    if merge:
-        logger.info(f"Final merged video created")
+def _generate_html_videos_step(output_dir: Path) -> None:
+    """Execute the generate-videos step (HTML pipeline: inject durations, record, mux)."""
+    run_html_video_step(output_dir)
+    logger.info("Final video created from HTML recording")
