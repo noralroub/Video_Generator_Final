@@ -113,10 +113,22 @@ Output the full HTML document (DOCTYPE, html, head, body, all CSS and JS inline)
         raise ImportError("anthropic package is required. Install with: pip install anthropic")
 
     client = Anthropic(api_key=api_key)
+    # #region agent log
+    _model = os.getenv("CLAUDE_VIDEO_MODEL", "claude-sonnet-4-20250514")
+    _logpath = Path(__file__).resolve().parent.parent / ".cursor" / "debug.log"
+    try:
+        _logpath.parent.mkdir(parents=True, exist_ok=True)
+        with open(_logpath, "a") as _f:
+            _f.write(
+                '{"id":"log_claude_model","timestamp":' + str(int(__import__("time").time() * 1000)) + ',"location":"html_video.py:client.messages.create","message":"Claude model id used","data":{"model":"' + _model.replace('"', '\\"') + '"},"hypothesisId":"A"}\n'
+            )
+    except Exception as _e:
+        logger.debug("Debug log write failed: %s", _e)
+    # #endregion
     logger.info("Calling Claude API to generate script and HTML")
 
     response = client.messages.create(
-        model=os.getenv("CLAUDE_VIDEO_MODEL", "claude-3-5-sonnet-20241022"),
+        model=_model,
         max_tokens=8192,
         messages=[{"role": "user", "content": prompt}],
     )
