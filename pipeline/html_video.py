@@ -135,14 +135,80 @@ Output the full HTML document (DOCTYPE, html, head, body, all CSS and JS inline)
 
     text = response.content[0].text if response.content else ""
 
-    # Parse ---SCRIPT--- ... ---HTML---
-    script_match = re.search(r"---SCRIPT---\s*(.*?)\s*---HTML---", text, re.DOTALL)
-    if not script_match:
-        raise ValueError("Claude response missing ---SCRIPT--- or ---HTML--- sections")
+    # Parse ---SCRIPT--- ... ---HTML--- (preferred), with fallbacks if Claude omits delimiters
+    script_raw = None
+    html_raw = None
 
-    script_raw = script_match.group(1).strip()
-    html_start = text.find("---HTML---") + len("---HTML---")
-    html_raw = text[html_start:].strip()
+    script_match = re.search(r"---SCRIPT---\s*(.*?)\s*---HTML---", text, re.DOTALL)
+    if script_match:
+        script_raw = script_match.group(1).strip()
+        html_start = text.find("---HTML---") + len("---HTML---")
+        html_raw = text[html_start:].strip()
+    else:
+        # Fallback: find first valid JSON array of scene objects, then HTML from <!DOCTYPE or <html
+        def _find_first_json_array(s: str) -> str | None:
+            start = s.find("[")
+            while start >= 0:
+                depth = 0
+                i = start
+                in_str = False
+                escape = False
+                quote = None
+                while i < len(s):
+                    c = s[i]
+                    if escape:
+                        escape = False
+                        i += 1
+                        continue
+                    if c == "\\" and in_str:
+                        escape = True
+                        i += 1
+                        continue
+                    if not in_str and c in ("'", '"'):
+                        in_str = True
+                        quote = c
+                        i += 1
+                        continue
+                    if in_str and c == quote:
+                        in_str = False
+                        i += 1
+                        continue
+                    if not in_str:
+                        if c == "[":
+                            depth += 1
+                        elif c == "]":
+                            depth -= 1
+                            if depth == 0:
+                                candidate = s[start : i + 1]
+                                try:
+                                    data = json.loads(candidate)
+                                    if isinstance(data, list) and data and isinstance(data[0], dict) and "text" in data[0]:
+                                        return candidate
+                                except (json.JSONDecodeError, IndexError, KeyError):
+                                    pass
+                                start = s.find("[", i + 1)
+                                break
+                    i += 1
+                else:
+                    break
+            return None
+
+        script_raw = _find_first_json_array(text)
+        if script_raw:
+            # HTML: from first <!DOCTYPE or <html (case-insensitive) to end
+            html_match = re.search(r"(<!DOCTYPE\s+html[^>]*>.*|<html[\s>].*)", text, re.DOTALL | re.IGNORECASE)
+            if html_match:
+                html_raw = html_match.group(1).strip()
+            else:
+                idx = text.find(script_raw) + len(script_raw)
+                tail = text[idx:].strip()
+                for strip in (r"^```\s*", r"^```html\s*", r"^```\w*\s*"):
+                    tail = re.sub(strip, "", tail, flags=re.IGNORECASE).strip()
+                if tail.startswith("```"):
+                    tail = tail.lstrip("`").strip()
+                html_raw = tail if len(tail) > 400 else None
+        if script_raw is None or html_raw is None or len(html_raw or "") < 400:
+            raise ValueError("Claude response missing ---SCRIPT--- or ---HTML--- sections (and fallback could not find valid script + HTML)")
 
     # Strip markdown code fences from script if present
     if script_raw.startswith("```"):
@@ -225,22 +291,43 @@ def inject_durations(html_path: Path, metadata_path: Path) -> None:
 
     html = html_path.read_text(encoding="utf-8")
 
-    # Replace placeholders. Claude may use them in const assignments.
-    # Replace the literal identifier with the array/number so JS stays valid.
     array_str = json.dumps(scene_durations)
     total_str = str(round(total, 2))
 
-    if SCENE_DURATIONS_PLACEHOLDER not in html:
-        raise ValueError(
-            f"HTML does not contain {SCENE_DURATIONS_PLACEHOLDER}; cannot inject durations"
+    # Prefer exact placeholders; fallback to regex when Claude uses literal numbers
+    if SCENE_DURATIONS_PLACEHOLDER in html:
+        html = html.replace(SCENE_DURATIONS_PLACEHOLDER, array_str)
+    else:
+        # Replace sceneDurations = [5, 5, ...] or similar with real durations
+        scene_re = re.compile(
+            r"\bsceneDurations\s*=\s*\[[^\]]*\]",
+            re.IGNORECASE,
         )
-    if TOTAL_DURATION_PLACEHOLDER not in html:
-        raise ValueError(
-            f"HTML does not contain {TOTAL_DURATION_PLACEHOLDER}; cannot inject durations"
-        )
+        if scene_re.search(html):
+            html = scene_re.sub("sceneDurations = " + array_str, html, count=1)
+        else:
+            raise ValueError(
+                "HTML does not contain SCENE_DURATIONS_PLACEHOLDER or sceneDurations = [...]; cannot inject durations"
+            )
 
-    html = html.replace(SCENE_DURATIONS_PLACEHOLDER, array_str)
-    html = html.replace(TOTAL_DURATION_PLACEHOLDER, total_str)
+    if TOTAL_DURATION_PLACEHOLDER in html:
+        html = html.replace(TOTAL_DURATION_PLACEHOLDER, total_str)
+    else:
+        total_re = re.compile(
+            r"\btotalDuration\s*=\s*[\d.]+\s*;",
+            re.IGNORECASE,
+        )
+        if total_re.search(html):
+            html = total_re.sub("totalDuration = " + total_str + ";", html, count=1)
+        else:
+            # Try without trailing semicolon (e.g. const totalDuration = 26\n)
+            total_re2 = re.compile(r"\btotalDuration\s*=\s*[\d.]+", re.IGNORECASE)
+            if total_re2.search(html):
+                html = total_re2.sub("totalDuration = " + total_str, html, count=1)
+            else:
+                raise ValueError(
+                    "HTML does not contain TOTAL_DURATION_PLACEHOLDER or totalDuration = <number>; cannot inject durations"
+                )
 
     html_path.write_text(html, encoding="utf-8")
     logger.info(f"Injected {len(scene_durations)} scene durations and total {total_str}s into {html_path}")
