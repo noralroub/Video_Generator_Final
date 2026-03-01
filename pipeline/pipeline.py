@@ -82,9 +82,9 @@ def check_audio_generated(output_dir: Path) -> bool:
 
 
 def check_videos_generated(output_dir: Path) -> bool:
-    """Check if final video has been generated (HTML pipeline: inject + record + mux)."""
-    final_video = output_dir / "final_video.mp4"
-    return final_video.exists()
+    """Check if video has been generated (HTML pipeline: inject + record to recorded.mp4)."""
+    recorded = output_dir / "recorded.mp4"
+    return recorded.exists()
 
 
 

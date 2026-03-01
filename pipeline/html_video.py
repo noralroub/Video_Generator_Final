@@ -429,23 +429,19 @@ def mux_audio_with_video(
 
 def run_html_video_step(output_dir: Path) -> None:
     """
-    Run the full "generate-videos" step for HTML pipeline: inject durations, record HTML, mux audio.
+    Run the full "generate-videos" step for HTML pipeline: inject durations, record HTML to video.
     Requires: motion_video.html, audio_metadata.json, audio.wav in output_dir.
-    Produces: final_video.mp4 in output_dir.
+    Produces: recorded.mp4 in output_dir (the playable recording; no final_video.mp4 mux step).
     """
     output_dir = Path(output_dir)
     html_path = output_dir / "motion_video.html"
     metadata_path = output_dir / "audio_metadata.json"
-    audio_path = output_dir / "audio.wav"
     recorded_path = output_dir / "recorded.mp4"
-    final_path = output_dir / "final_video.mp4"
 
     if not html_path.exists():
         raise FileNotFoundError(f"motion_video.html not found in {output_dir}")
     if not metadata_path.exists():
         raise FileNotFoundError(f"audio_metadata.json not found in {output_dir}")
-    if not audio_path.exists():
-        raise FileNotFoundError(f"audio.wav not found in {output_dir}")
 
     with open(metadata_path, "r", encoding="utf-8") as f:
         meta = json.load(f)
@@ -455,6 +451,5 @@ def run_html_video_step(output_dir: Path) -> None:
 
     inject_durations(html_path, metadata_path)
     record_html_to_video(html_path, recorded_path, total_duration)
-    mux_audio_with_video(recorded_path, audio_path, final_path)
 
-    logger.info(f"HTML video step complete: {final_path}")
+    logger.info(f"HTML video step complete: {recorded_path}")

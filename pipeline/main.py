@@ -163,7 +163,7 @@ def generate_script(paper_dir):
     PAPER_DIR: Directory containing paper.json (from fetch-paper command)
 
     Writes script.json and motion_video.html (with placeholder durations).
-    Run generate-audio next, then generate-videos to produce final_video.mp4.
+    Run generate-audio next, then generate-videos to produce recorded.mp4.
 
     Example:
         python main.py generate-script ./my_paper
@@ -295,7 +295,7 @@ def generate_videos_cmd(paper_dir):
     PAPER_DIR: Directory containing motion_video.html, audio_metadata.json, audio.wav
     (from generate-script and generate-audio commands).
 
-    Output: final_video.mp4 in PAPER_DIR.
+    Output: recorded.mp4 in PAPER_DIR.
 
     Example:
         python main.py generate-videos ./my_paper
@@ -303,9 +303,9 @@ def generate_videos_cmd(paper_dir):
     try:
         output_path = Path(paper_dir)
         click.echo(f"Running HTML video step in {output_path}...")
-        click.echo("(Injecting durations, recording viewport, muxing audio...)")
+        click.echo("(Injecting durations, recording viewport...)")
         run_html_video_step(output_path)
-        click.secho(f"\n✓ Video complete: {output_path / 'final_video.mp4'}", fg="green", bold=True)
+        click.secho(f"\n✓ Video complete: {output_path / 'recorded.mp4'}", fg="green", bold=True)
     except Exception as e:
         logging.exception("Error generating video from HTML")
         click.secho(f"✗ Error: {e}", fg="red", err=True)
@@ -362,7 +362,7 @@ def generate_video(
     1. fetch-paper: Download paper from PubMed Central
     2. generate-script-and-html: Create script and motion HTML with Claude
     3. generate-audio: Generate TTS audio for each scene (Gemini)
-    4. generate-videos: Inject durations, record HTML, mux audio to final_video.mp4
+    4. generate-videos: Inject durations, record HTML to recorded.mp4
 
     By default, the pipeline is idempotent. Use --no-skip-existing to force
     re-execution of all steps.
@@ -397,7 +397,7 @@ def generate_video(
             f"✓ Pipeline complete! Videos in {output_path}", fg="green", bold=True
         )
         click.secho(
-            f"✓ Final video: {output_path}/final_video.mp4",
+            f"✓ Final video: {output_path}/recorded.mp4",
             fg="green",
             bold=True,
         )

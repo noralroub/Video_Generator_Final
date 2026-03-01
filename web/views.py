@@ -128,7 +128,7 @@ def _check_video_exists(pmid: str, user=None) -> tuple[bool, Optional[str]]:
                                 try:
                                     _, files = default_storage.listdir(date_path)
                                     for filename in files:
-                                        if filename.startswith(f"{pmid}_final_video_") and filename.endswith('.mp4'):
+                                        if (filename.startswith(f"{pmid}_final_video_") or filename.startswith(f"{pmid}_recorded_")) and filename.endswith('.mp4'):
                                             found_path = date_path + filename
                                             logger.info(f"Found video in R2 storage: {found_path}")
                                             break
@@ -156,9 +156,9 @@ def _check_video_exists(pmid: str, user=None) -> tuple[bool, Optional[str]]:
     # Fallback: check local filesystem (for development or migration period)
     if not settings.USE_CLOUD_STORAGE:
         output_dir = Path(settings.MEDIA_ROOT) / pmid
-        final_video = output_dir / "final_video.mp4"
-        if final_video.exists():
-            video_url = reverse("serve_video", args=[pmid])
+        recorded = output_dir / "recorded.mp4"
+        if recorded.exists():
+            video_url = f"{settings.MEDIA_URL.rstrip('/')}/{pmid}/recorded.mp4"
             return True, video_url
     
     return False, None
@@ -698,12 +698,12 @@ def debug_video_files(request, pmid: str):
                                 "file_count": file_count,
                             }
                             
-                            # Check if this directory contains final_video.mp4
-                            final_video_in_dir = item / "final_video.mp4"
-                            if final_video_in_dir.exists():
+                            # Check if this directory contains recorded.mp4
+                            recorded_in_dir = item / "recorded.mp4"
+                            if recorded_in_dir.exists():
                                 try:
                                     dir_info["has_final_video"] = True
-                                    dir_info["final_video_size"] = final_video_in_dir.stat().st_size
+                                    dir_info["final_video_size"] = recorded_in_dir.stat().st_size
                                 except:
                                     dir_info["has_final_video"] = True
                                     dir_info["final_video_size"] = "unknown"
@@ -779,25 +779,25 @@ def debug_video_files(request, pmid: str):
                 result["scan_error"] = str(e)
                 result["scan_traceback"] = traceback.format_exc()
         
-        # Check specifically for final_video.mp4
-        final_video = output_dir / "final_video.mp4"
+        # Check specifically for recorded.mp4 (the playable output video)
+        recorded = output_dir / "recorded.mp4"
         try:
-            final_video_exists = final_video.exists()
-            final_video_size = 0
-            if final_video_exists:
+            recorded_exists = recorded.exists()
+            recorded_size = 0
+            if recorded_exists:
                 try:
-                    final_video_size = final_video.stat().st_size
+                    recorded_size = recorded.stat().st_size
                 except Exception as e:
-                    final_video_size = f"error: {str(e)}"
+                    recorded_size = f"error: {str(e)}"
             
             result["final_video_check"] = {
-                "expected_path": str(final_video),
-                "exists": final_video_exists,
-                "size": final_video_size,
+                "expected_path": str(recorded),
+                "exists": recorded_exists,
+                "size": recorded_size,
             }
         except Exception as e:
             result["final_video_check"] = {
-                "expected_path": str(final_video),
+                "expected_path": str(recorded),
                 "error": str(e),
             }
         
@@ -861,7 +861,7 @@ def _get_pipeline_progress(output_dir: Path) -> Dict:
         ("fetch-paper", lambda d: (d / "paper.json").exists()),
         ("generate-script", lambda d: (d / "script.json").exists()),
         ("generate-audio", lambda d: (d / "audio.wav").exists() and (d / "audio_metadata.json").exists()),
-        ("generate-videos", lambda d: (d / "clips" / ".videos_complete").exists() or (d / "final_video.mp4").exists()),
+        ("generate-videos", lambda d: (d / "clips" / ".videos_complete").exists() or (d / "recorded.mp4").exists()),
     ]
     
     completed_steps = []
@@ -881,7 +881,7 @@ def _get_pipeline_progress(output_dir: Path) -> Dict:
     
     # Check if pipeline failed (has log but no final video and not currently running)
     log_path = output_dir / "pipeline.log"
-    final_video = output_dir / "final_video.mp4"
+    recorded = output_dir / "recorded.mp4"
     
     error = None
     error_type = None
@@ -907,7 +907,7 @@ def _get_pipeline_progress(output_dir: Path) -> Dict:
     
     # Fallback to local filesystem check
     if not video_exists:
-        video_exists = output_dir.exists() and final_video.exists()
+        video_exists = output_dir.exists() and recorded.exists()
     
     if video_exists:
         status = "completed"
@@ -989,7 +989,7 @@ def _get_pipeline_progress(output_dir: Path) -> Dict:
             
             # Fallback to local filesystem check
             if not video_exists:
-                video_exists = final_video.exists()
+                video_exists = recorded.exists()
             
             if video_exists:
                 status = "completed"
@@ -1088,7 +1088,7 @@ def _get_pipeline_progress(output_dir: Path) -> Dict:
         
         # Fallback to local filesystem check
         if not video_exists:
-            video_exists = final_video.exists()
+            video_exists = recorded.exists()
         
         if video_exists:
             status = "completed"
@@ -1305,7 +1305,7 @@ def upload_paper(request):
 def pipeline_status(request, pmid: str):
     """Return a small status page for a running pipeline and a JSON status endpoint."""
     output_dir = Path(settings.MEDIA_ROOT) / pmid
-    final_video = output_dir / "final_video.mp4"
+    recorded = output_dir / "recorded.mp4"
     log_path = output_dir / "pipeline.log"
 
     # Try to get progress from database first
@@ -1393,7 +1393,7 @@ def pipeline_status(request, pmid: str):
         try:
             progress = _get_pipeline_progress(output_dir)
             # If final video exists, mark as completed
-            if final_video.exists() and progress.get("progress_percent", 0) >= 100:
+            if recorded.exists() and progress.get("progress_percent", 0) >= 100:
                 progress["status"] = "completed"
         except Exception as e:
             # Fallback progress dict if _get_pipeline_progress fails
@@ -1401,7 +1401,7 @@ def pipeline_status(request, pmid: str):
             logger = logging.getLogger(__name__)
             logger.exception(f"Error getting pipeline progress for {pmid}: {e}")
             # If video exists, mark as completed even if we can't get progress
-            if final_video.exists():
+            if recorded.exists():
                 progress = {
                     "status": "completed",
                     "current_step": None,
@@ -1585,13 +1585,13 @@ def serve_video(request, pmid: str):
         else:
             # Local development fallback
             output_dir = Path(settings.MEDIA_ROOT) / pmid
-            final_video = output_dir / "final_video.mp4"
-            
-            if final_video.exists():
+            recorded = output_dir / "recorded.mp4"
+
+            if recorded.exists():
                 return FileResponse(
-                    open(final_video, 'rb'),
+                    open(recorded, 'rb'),
                     content_type='video/mp4',
-                    filename='final_video.mp4'
+                    filename='recorded.mp4'
                 )
         
         raise Http404("Video not found")
@@ -1905,10 +1905,10 @@ def api_status(request, paper_id: str):
     if progress is None:
         progress = _get_pipeline_progress(output_dir)
     
-    final_video = output_dir / "final_video.mp4"
+    recorded = output_dir / "recorded.mp4"
     final_video_url = None
-    if final_video.exists():
-        final_video_url = f"{settings.MEDIA_URL}{paper_id}/final_video.mp4"
+    if recorded.exists():
+        final_video_url = f"{settings.MEDIA_URL.rstrip('/')}/{paper_id}/recorded.mp4"
     
     # Get log tail
     log_path = output_dir / "pipeline.log"

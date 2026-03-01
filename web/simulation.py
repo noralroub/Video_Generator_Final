@@ -141,9 +141,9 @@ def update_job_progress(job, step_name: str):
             
             # Handle completion-specific fields
             if status == "completed":
-                final_video = Path(settings.MEDIA_ROOT) / job.paper_id / "final_video.mp4"
-                if final_video.exists():
-                    job.final_video_path = str(final_video)
+                recorded = Path(settings.MEDIA_ROOT) / job.paper_id / "recorded.mp4"
+                if recorded.exists():
+                    job.final_video_path = str(recorded)
                     job.save(update_fields=['final_video_path', 'updated_at'])
         except Exception as e:
             logger.warning(f"Failed to update progress via manager in simulation, updating directly: {e}")
@@ -154,9 +154,9 @@ def update_job_progress(job, step_name: str):
             
             if status == "completed":
                 job.completed_at = django_timezone.now()
-                final_video = Path(settings.MEDIA_ROOT) / job.paper_id / "final_video.mp4"
-                if final_video.exists():
-                    job.final_video_path = str(final_video)
+                recorded = Path(settings.MEDIA_ROOT) / job.paper_id / "recorded.mp4"
+                if recorded.exists():
+                    job.final_video_path = str(recorded)
             
             job.save(update_fields=['status', 'progress_percent', 'current_step', 'completed_at', 'final_video_path', 'updated_at'])
         logger.info(f"Updated job record: {status} - {progress_percent}% - {current_step}")
