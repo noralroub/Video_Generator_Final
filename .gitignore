@@ -30,6 +30,9 @@ db.sqlite3
 
 # Editor backups
 *~
+.vscode/
+.idea/
+.DS_Store
 
 # Archive directory created by cleanup
 archive/
@@ -46,6 +49,7 @@ staticfiles/
 # Temporary test files and generated content
 kyle-code/tmp/
 pipeline/tmp/
+tmp/
 
 # Cursor ignore
 .cursorignore

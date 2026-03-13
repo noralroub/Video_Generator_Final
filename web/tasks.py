@@ -42,25 +42,30 @@ def _parse_pipeline_progress(line: str, current_progress: dict) -> Optional[dict
     line_lower = line.lower()
     
     # Step completion markers - based on actual pipeline.py logging
-    # Progress: 25%, 50%, 75%, 100% for 4 steps
+    # Sprint 2: 5 steps → 20%, 40%, 60%, 80%, 100%
     step_markers = {
         "fetch-paper": {
             "start": "step: fetch-paper",
             "complete": "complete",  # "✓ Complete" or "✓ Already complete, skipping"
-            "percent": 25,
+            "percent": 20,
         },
         "generate-script": {
             "start": "step: generate-script",
             "complete": "complete",
-            "percent": 50,
+            "percent": 40,
+        },
+        "generate-frames": {
+            "start": "step: generate-frames",
+            "complete": "complete",
+            "percent": 60,
         },
         "generate-audio": {
             "start": "step: generate-audio",
             "complete": "complete",
-            "percent": 75,
+            "percent": 80,
         },
-        "generate-videos": {
-            "start": "step: generate-videos",
+        "build-presentation": {
+            "start": "step: build-presentation",
             "complete": "complete",
             "percent": 100,
         },
@@ -407,9 +412,11 @@ def generate_video_task(self, pmid: str, output_dir: str, user_id: Optional[int]
                 
                 # Final progress update
                 if progress_state["progress_percent"] < 100:
-                    # Check if final video exists
-                    final_video = output_path / "final_video.mp4"
-                    if final_video.exists():
+                    # Check if audio artifacts exist (script + audio define completion in sprint 1)
+                    script_file = output_path / "script.json"
+                    audio_file = output_path / "audio.wav"
+                    metadata_file = output_path / "audio_metadata.json"
+                    if script_file.exists() and audio_file.exists() and metadata_file.exists():
                         progress_state["progress_percent"] = 100
                         progress_state["current_step"] = None
                         progress_state["status"] = "completed"
@@ -485,136 +492,29 @@ def generate_video_task(self, pmid: str, output_dir: str, user_id: Optional[int]
         except Exception as e:
             logger.warning(f"Failed to process update queue: {e}")
         
-        # Check if pipeline succeeded
-        final_video = output_path / "final_video.mp4"
+        # Check if pipeline succeeded (Sprint 2: completion = script + frames + audio + presentation)
+        script_file = output_path / "script.json"
+        audio_file = output_path / "audio.wav"
+        metadata_file = output_path / "audio_metadata.json"
+        frames_file = output_path / "frames.json"
+        presentation_file = output_path / "presentation.json"
         
-        if return_code == 0 and final_video.exists():
+        if (
+            return_code == 0
+            and script_file.exists()
+            and audio_file.exists()
+            and metadata_file.exists()
+            and frames_file.exists()
+            and presentation_file.exists()
+        ):
             task_result["status"] = "completed"
             logger.info(f"Video generation completed successfully for {pmid}")
             
-            # Upload to cloud storage (R2) or save locally
+            # Update job as completed (no final video in sprint 1)
             if job:
                 try:
-                    from django.core.files import File
-                    from django.core.files.storage import default_storage
-                    from datetime import datetime
-                    
                     # Refresh job to get latest progress
                     job.refresh_from_db()
-                    
-                    # Generate unique filename (model's upload_to will add date path automatically)
-                    # Format: {pmid}_final_video_{timestamp}.mp4
-                    # Model's upload_to='videos/%Y/%m/%d/' will create: videos/2025/01/28/{filename}.mp4
-                    video_filename = f"{pmid}_final_video_{datetime.now().strftime('%Y%m%d_%H%M%S')}.mp4"
-                    
-                    # ============================================================================
-                    # CRITICAL VIDEO UPLOAD AND DATABASE SAVE SECTION
-                    # ============================================================================
-                    # This section MUST ensure both final_video and final_video_path are saved
-                    # to the database immediately after R2 upload. Multiple verification steps
-                    # are included to guarantee data integrity.
-                    # ============================================================================
-                    # Upload to cloud storage (R2) or save locally
-                    if settings.USE_CLOUD_STORAGE:
-                        # Open the local file and upload to cloud storage
-                        try:
-                            # Open file and upload to R2
-                            with open(final_video, 'rb') as f:
-                                django_file = File(f, name=video_filename)
-                                # Upload to R2 storage (save=False means upload to storage but don't save to DB yet)
-                                job.final_video.save(video_filename, django_file, save=False)
-                                video_storage_path = job.final_video.name  # Capture the path immediately
-                            
-                            # Now save to database (file handle is closed, but FileField is set)
-                            job.final_video_path = video_storage_path  # Store the storage path
-                            logger.info(f"Video uploaded to cloud storage: {video_storage_path}")
-                            
-                            # CRITICAL: Save BOTH fields to database immediately after R2 upload
-                            # Use atomic transaction to ensure both fields are saved together
-                            from django.db import transaction
-                            try:
-                                with transaction.atomic():
-                                    job.save(update_fields=['final_video', 'final_video_path', 'updated_at'])
-                                
-                                # VERIFY the save worked by refreshing from DB
-                                job.refresh_from_db()
-                                
-                                # Verify final_video FileField
-                                if job.final_video and job.final_video.name == video_storage_path:
-                                    logger.info(f"✅ VERIFIED: final_video saved to database: {job.final_video.name}")
-                                else:
-                                    logger.error(f"❌ WARNING: final_video mismatch or missing! Expected: {video_storage_path}, Got: {job.final_video.name if job.final_video else 'None'}")
-                                    # Try to fix it by setting from storage
-                                    try:
-                                        from django.core.files.storage import default_storage
-                                        if default_storage.exists(video_storage_path):
-                                            with default_storage.open(video_storage_path, 'rb') as f:
-                                                django_file = File(f, name=os.path.basename(video_storage_path))
-                                                job.final_video.save(os.path.basename(video_storage_path), django_file, save=False)
-                                            with transaction.atomic():
-                                                job.save(update_fields=['final_video', 'updated_at'])
-                                            job.refresh_from_db()
-                                            if job.final_video and job.final_video.name:
-                                                logger.info(f"✅ FIXED: final_video now saved: {job.final_video.name}")
-                                    except Exception as fix_error:
-                                        logger.error(f"❌ Could not fix final_video: {fix_error}")
-                                
-                                # Verify final_video_path
-                                if job.final_video_path == video_storage_path:
-                                    logger.info(f"✅ VERIFIED: final_video_path saved: {job.final_video_path}")
-                                else:
-                                    logger.error(f"❌ FAILED: final_video_path not saved! Expected: {video_storage_path}, Got: {job.final_video_path}")
-                                    # Fix it
-                                    job.final_video_path = video_storage_path
-                                    with transaction.atomic():
-                                        job.save(update_fields=['final_video_path', 'updated_at'])
-                                    logger.info(f"✅ FIXED: final_video_path now set: {job.final_video_path}")
-                                    
-                            except Exception as save_error:
-                                logger.critical(f"❌ CRITICAL ERROR saving video to database: {save_error}", exc_info=True)
-                                # Emergency fallback: save path at minimum
-                                try:
-                                    job.final_video_path = video_storage_path
-                                    with transaction.atomic():
-                                        job.save(update_fields=['final_video_path', 'updated_at'])
-                                    logger.warning(f"⚠️ Saved final_video_path as emergency fallback: {job.final_video_path}")
-                                except Exception as fallback_error:
-                                    logger.critical(f"❌ CRITICAL: Even fallback save failed: {fallback_error}")
-                            
-                            # Delete local file after successful R2 upload and DB save
-                            try:
-                                final_video.unlink()
-                                logger.info(f"Deleted local file after successful R2 upload: {final_video}")
-                            except Exception as cleanup_error:
-                                logger.warning(f"Failed to delete local file after R2 upload: {cleanup_error}")
-                        except Exception as upload_error:
-                            logger.error(f"Failed to upload video to cloud storage: {upload_error}", exc_info=True)
-                            if settings.USE_CLOUD_STORAGE:
-                                # In production with cloud storage, this is a critical error
-                                logger.critical(
-                                    f"CRITICAL: R2 upload failed in production mode for {pmid}. "
-                                    f"Video may not be accessible. Error: {upload_error}"
-                                )
-                                # Still save local path as fallback, but log the critical issue
-                                job.final_video_path = str(final_video)
-                                logger.warning(f"Saved local path as fallback: {job.final_video_path}")
-                            else:
-                                # Development mode - just use local path
-                                job.final_video_path = str(final_video)
-                                logger.warning(f"Saved local path as fallback: {job.final_video_path}")
-                    else:
-                        # Local storage - just save the path
-                        job.final_video_path = str(final_video)
-                    
-                    # FINAL SAFEGUARD: Ensure video fields are saved before marking complete
-                    job.refresh_from_db()
-                    if settings.USE_CLOUD_STORAGE and job.status == 'completed':
-                        # Double-check video path is saved
-                        if not job.final_video_path:
-                            logger.critical(f"❌ CRITICAL: Job marked complete but final_video_path is EMPTY!")
-                            # Try to recover - but this should never happen
-                        elif job.final_video_path:
-                            logger.info(f"✅ FINAL CHECK: Video path confirmed in database: {job.final_video_path}")
                     
                     # Update job status using progress manager
                     try:
@@ -632,18 +532,7 @@ def generate_video_task(self, pmid: str, output_dir: str, user_id: Optional[int]
                         job.progress_percent = 100
                         job.current_step = None
                         job.completed_at = timezone.now()
-                        # Ensure video fields are included in save
-                        job.save(update_fields=['final_video', 'final_video_path', 'status', 'progress_percent', 'current_step', 'completed_at', 'updated_at'])
-                    else:
-                        # Progress manager updated successfully
-                        # Final verification: ensure video fields are still saved
-                        job.refresh_from_db()
-                        if settings.USE_CLOUD_STORAGE:
-                            if not job.final_video_path:
-                                logger.critical(f"❌ CRITICAL: final_video_path lost after progress update! This should never happen.")
-                            elif job.final_video_path:
-                                logger.info(f"✅ Final verification: Video path persists: {job.final_video_path}")
-                    
+                        job.save(update_fields=['status', 'progress_percent', 'current_step', 'completed_at', 'updated_at'])
                 except Exception as e:
                     logger.error(f"Failed to update job record on completion: {e}", exc_info=True)
         else:
@@ -958,12 +847,21 @@ def update_job_progress_from_files(pmid: str, task_id: Optional[str] = None) -> 
             logger.debug(f"Output directory does not exist yet: {output_dir}")
             return
         
-        # Check pipeline steps (4 steps: 25%, 50%, 75%, 100%)
+        # Check pipeline steps (Sprint 2: 5 steps: 20%, 40%, 60%, 80%, 100%)
         steps = [
-            ("fetch-paper", 25, lambda d: (d / "paper.json").exists()),
-            ("generate-script", 50, lambda d: (d / "script.json").exists()),
-            ("generate-audio", 75, lambda d: (d / "audio.wav").exists() and (d / "audio_metadata.json").exists()),
-            ("generate-videos", 100, lambda d: (d / "clips" / ".videos_complete").exists() or (d / "final_video.mp4").exists()),
+            ("fetch-paper", 20, lambda d: (d / "paper.json").exists()),
+            ("generate-script", 40, lambda d: (d / "script.json").exists()),
+            (
+                "generate-frames",
+                60,
+                lambda d: (d / "frames.json").exists() and (d / "frames").exists(),
+            ),
+            (
+                "generate-audio",
+                80,
+                lambda d: (d / "audio.wav").exists() and (d / "audio_metadata.json").exists(),
+            ),
+            ("build-presentation", 100, lambda d: (d / "presentation.json").exists()),
         ]
         
         current_step = None
@@ -993,13 +891,10 @@ def update_job_progress_from_files(pmid: str, task_id: Optional[str] = None) -> 
             job.progress_percent = progress_percent
             job.current_step = current_step
             if progress_percent == 100:
-                final_video = output_dir / "final_video.mp4"
-                if final_video.exists():
-                    job.status = 'completed'
-                    job.final_video_path = str(final_video)
-                    job.completed_at = timezone.now()
-                    job.current_step = None
-            job.save(update_fields=['progress_percent', 'current_step', 'status', 'final_video_path', 'completed_at', 'updated_at'])
+                job.status = 'completed'
+                job.completed_at = timezone.now()
+                job.current_step = None
+            job.save(update_fields=['progress_percent', 'current_step', 'status', 'completed_at', 'updated_at'])
             logger.info(f"Job progress updated successfully")
         else:
             logger.debug(f"Job progress unchanged: {progress_percent}%, step: {current_step}")

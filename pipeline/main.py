@@ -5,7 +5,11 @@ import time
 from pathlib import Path
 
 import click
-from runwayml import RunwayML
+
+try:
+    from runwayml import RunwayML
+except ImportError:
+    RunwayML = None
 
 # Load environment variables from .env file (if it exists)
 try:
@@ -30,7 +34,7 @@ logging.basicConfig(
 
 @click.group()
 def cli():
-    """Gemini Video Generation CLI - Generate videos using Google's Veo model."""
+    """Gemini Video Generation CLI - Generate narrative audio and (optionally) videos."""
     pass
 
 
@@ -51,6 +55,10 @@ def cli():
 )
 def generate(prompt, output, model, poll_interval):
     """Generate a video from a text prompt using Runway."""
+    if RunwayML is None:
+        raise click.ClickException(
+            "RunwayML is not installed. Install the runwayml package to use this command."
+        )
     client = RunwayML()
 
     click.echo(f"Starting video generation with model: {model}")
@@ -449,7 +457,6 @@ def generate_video(
     1. fetch-paper: Download paper from PubMed Central
     2. generate-script: Create video script with scenes
     3. generate-audio: Generate TTS audio for each scene
-    4. generate-videos: Create video clips with Runway Veo 3.1 Fast
 
     By default, the pipeline is idempotent - it will skip steps that
     have already been completed. Use --no-skip-existing to force
@@ -482,14 +489,10 @@ def generate_video(
             merge=not no_merge,
         )
         click.secho(
-            f"✓ Pipeline complete! Videos in {output_path}", fg="green", bold=True
+            f"✓ Pipeline complete! Script and audio in {output_path}",
+            fg="green",
+            bold=True,
         )
-        if not no_merge:
-            click.secho(
-                f"✓ Final merged video: {output_path}/final_video.mp4",
-                fg="green",
-                bold=True,
-            )
     except PipelineError as e:
         click.secho(f"✗ Pipeline failed: {e}", fg="red", err=True)
         raise click.Abort()

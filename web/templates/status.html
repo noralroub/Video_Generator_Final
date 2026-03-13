@@ -8,17 +8,16 @@
 
   <!-- Status Alert Container (will be updated by JavaScript) -->
   <div id="status-alert-container">
-    {% if final_video_exists %}
-      <div class="alert alert-info">
-        <p><strong>Final video ready!</strong></p>
+    {% if progress.status == "completed" %}
+      <div class="alert alert-success">
+        <p><strong>Presentation ready!</strong></p>
         <div class="button-group">
-          <a href="{{ final_video_url }}" class="btn-primary">Download/Play</a>
-          <a href="/result/{{ pmid }}" class="btn-secondary">Open result page</a>
+          <a href="/result/{{ pmid }}" class="btn-primary">Open result page</a>
         </div>
       </div>
     {% elif progress.status == "failed" %}
       <div class="alert alert-error">
-        <p><strong>❌ Video generation failed</strong></p>
+        <p><strong>❌ Generation failed</strong></p>
         {% if error_message %}
           <p>{{ error_message }}</p>
         {% elif progress.error %}
@@ -36,30 +35,14 @@
     {% endif %}
   </div>
 
-  <!-- Video Download Section (shown when video exists) -->
-  {% if final_video_exists %}
-  <div data-video-section class="video-ready-section">
-    <h2>🎬 Video Ready!</h2>
-    <p>Your video has been successfully generated and is ready to download or play.</p>
+  <!-- Presentation call-to-action (shown when pipeline completes) -->
+  {% if progress.status == "completed" %}
+  <div class="video-ready-section">
+    <h2>📄 Presentation Ready!</h2>
+    <p>Your narrated HTML presentation has been generated. Open the result page to view frames and audio.</p>
     <div class="button-group">
-      <a href="{{ final_video_url }}" class="btn-primary">▶️ Play/Download Video</a>
-      <a href="/result/{{ pmid }}" class="btn-secondary">📄 View Result Page</a>
+      <a href="/result/{{ pmid }}" class="btn-primary">Open Result Page</a>
     </div>
-  </div>
-  {% elif progress.progress_percent >= 100 %}
-  <!-- Video Section - Fallback that shows when progress is 100% but video not detected yet -->
-  <div id="video-section-fallback" data-video-section class="video-ready-section">
-    <h2>🎬 Video Ready!</h2>
-    <p>Your video has been successfully generated.</p>
-    {% if final_video_url %}
-    <div class="button-group">
-      <a href="{{ final_video_url }}" class="btn-primary">▶️ Play/Download Video</a>
-      <a href="/result/{{ pmid }}" class="btn-secondary">📄 View Result Page</a>
-    </div>
-    {% else %}
-    <p class="video-processing">Video file is being processed. Please refresh the page in a moment.</p>
-    <a href="/result/{{ pmid }}" class="btn-secondary">Try Result Page</a>
-    {% endif %}
   </div>
   {% endif %}
 
@@ -71,9 +54,9 @@
     </div>
     <p><strong id="progress-text">{{ progress.progress_percent }}%</strong> complete (<span id="completed-count">{{ progress.completed_steps|length }}</span> of <span id="total-steps">{{ progress.total_steps }}</span> steps)</p>
     
-    {% if final_video_exists and progress.progress_percent >= 100 %}
+    {% if progress.status == "completed" %}
     <div class="alert alert-info">
-      <p><strong>✅ All steps completed!</strong> Your video is ready. Use the download button above to access it.</p>
+      <p><strong>✅ All steps completed!</strong> Your presentation is ready. Use the button above to open the result page.</p>
     </div>
     {% endif %}
     
@@ -100,7 +83,7 @@
   </div>
 
   <div class="button-group">
-    <a href="/upload/" class="btn-primary">Generate another video</a>
+    <a href="/upload/" class="btn-primary">Generate another presentation</a>
     <a href="?_json=1" class="btn-secondary" target="_blank">View JSON status</a>
   </div>
 
@@ -108,7 +91,7 @@
     // Auto-refresh status page
     const pmid = "{{ pmid }}";
     let refreshInterval = null;
-    let isCompleted = {% if final_video_exists %}true{% else %}false{% endif %};
+    let isCompleted = {% if progress.status|default:"" == "completed" %}true{% else %}false{% endif %};
     let isFailed = {% if progress.status|default:"" == "failed" %}true{% else %}false{% endif %};
     let lastProgressTimestamp = null;
     let staleUpdateCount = 0;
@@ -155,7 +138,7 @@
             progressBar.style.width = data.progress_percent + '%';
             if (progressText) progressText.textContent = data.progress_percent + '%';
             if (completedCount) completedCount.textContent = data.completed_steps ? data.completed_steps.length : 0;
-            if (totalSteps) totalSteps.textContent = data.total_steps || 4;
+            if (totalSteps) totalSteps.textContent = data.total_steps || 5;
           }
 
           // Update current step
@@ -187,32 +170,15 @@
           // Update status alert
           const statusContainer = document.getElementById('status-alert-container');
           if (statusContainer) {
-            // Check if video exists - multiple conditions
-            const videoReady = (
-              (data.status === 'completed' && data.final_video_url) ||
-              (data.progress_percent >= 100 && data.final_video_url) ||
-              (data.final_video === true && data.final_video_url)
-            );
-            
-            if (videoReady) {
-              // Video is ready - show success message
+            if (data.status === 'completed') {
               statusContainer.innerHTML = `
-                <div class="video-ready-section">
-                  <h2>🎬 Video Ready!</h2>
-                  <p>Your video has been successfully generated and is ready to download or play.</p>
+                <div class="alert alert-success">
+                  <p><strong>Presentation ready!</strong></p>
                   <div class="button-group">
-                    <a href="${data.final_video_url}" class="btn-primary">▶️ Play/Download Video</a>
-                    <a href="/result/${pmid}" class="btn-secondary">📄 View Result Page</a>
+                    <a href="/result/${pmid}" class="btn-primary">Open result page</a>
                   </div>
                 </div>
               `;
-              
-              // Also show the static video section if it exists
-              const videoSection = document.querySelector('[data-video-section]');
-              if (videoSection) {
-                videoSection.style.display = 'block';
-              }
-              
               isCompleted = true;
               stopPolling();
             } else if (data.status === 'failed') {

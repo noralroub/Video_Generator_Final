@@ -7,9 +7,12 @@ from pathlib import Path
 from typing import Callable, Optional
 
 from audio import generate_audio, save_audio_metadata
+from frames import (
+    build_presentation,
+    generate_frames_artifacts,
+)
 from pubmed import fetch_paper
 from scenes import generate_scenes, save_scenes, load_scenes
-from video import generate_videos, save_video_metadata
 
 logger = logging.getLogger(__name__)
 
@@ -80,63 +83,20 @@ def check_audio_generated(output_dir: Path) -> bool:
     return True
 
 
-def check_videos_generated(output_dir: Path) -> bool:
-    """Check if videos have been generated for all scenes.
-    
-    More robust check: verifies that all expected video clips exist
-    based on the script, not just a marker file.
-    """
-    # First check for marker file (fast path)
-    clips_dir = output_dir / "clips"
-    marker_path = clips_dir / ".videos_complete"
-    if marker_path.exists():
-        return True
-    
-    # If no marker, check if all expected videos exist based on script
-    script_file = output_dir / "script.json"
-    if not script_file.exists():
+def check_frames_generated(output_dir: Path) -> bool:
+    """Check if frames.json and basic frame HTML files exist."""
+    frames_json = output_dir / "frames.json"
+    frames_dir = output_dir / "frames"
+    if not frames_json.exists() or not frames_dir.exists():
         return False
-    
-    # Load script to determine how many scenes we need
-    scenes = load_scenes(script_file)
-    if not scenes:
-        return False
-    
-    # Check if all expected video clips exist
-    expected_count = len(scenes)
-    existing_clips = list(clips_dir.glob("scene_*.mp4")) if clips_dir.exists() else []
-    
-    # Count unique scene clips (scene_00.mp4, scene_01.mp4, etc.)
-    scene_indices = set()
-    for clip_path in existing_clips:
-        try:
-            # Extract scene number from filename like "scene_00.mp4"
-            name = clip_path.stem  # "scene_00"
-            if name.startswith("scene_"):
-                scene_num = int(name.split("_")[1])
-                scene_indices.add(scene_num)
-        except (ValueError, IndexError):
-            continue
-    
-    # Check if we have all required clips
-    all_clips_exist = len(scene_indices) >= expected_count and all(
-        i in scene_indices for i in range(expected_count)
-    )
-    
-    if all_clips_exist:
-        logger.info(
-            f"All {expected_count} video clips found (even without marker file), "
-            "skipping video generation"
-        )
-        # Create marker file for faster future checks
-        if not marker_path.exists():
-            marker_path.parent.mkdir(parents=True, exist_ok=True)
-            marker_path.touch()
-            logger.debug(f"Created missing marker file: {marker_path}")
-    
-    return all_clips_exist
+    # Require at least one HTML frame file
+    html_files = list(frames_dir.glob("scene_*.html"))
+    return len(html_files) > 0
 
 
+def check_presentation_built(output_dir: Path) -> bool:
+    """Check if presentation.json exists."""
+    return (output_dir / "presentation.json").exists()
 
 
 def orchestrate_pipeline(
@@ -179,16 +139,22 @@ def orchestrate_pipeline(
             execute=lambda: _generate_script_step(output_dir),
         ),
         PipelineStep(
+            name="generate-frames",
+            description="Generating HTML frames from script",
+            check_completion=lambda: check_frames_generated(output_dir),
+            execute=lambda: _generate_frames_step(output_dir),
+        ),
+        PipelineStep(
             name="generate-audio",
             description="Generating audio for all scenes",
             check_completion=lambda: check_audio_generated(output_dir),
             execute=lambda: _generate_audio_step(output_dir, voice),
         ),
         PipelineStep(
-            name="generate-videos",
-            description="Generating videos for all scenes",
-            check_completion=lambda: check_videos_generated(output_dir),
-            execute=lambda: _generate_videos_step(output_dir, max_workers, merge),
+            name="build-presentation",
+            description="Composing frames and audio into HTML presentation",
+            check_completion=lambda: check_presentation_built(output_dir),
+            execute=lambda: _build_presentation_step(output_dir),
         ),
     ]
 
@@ -259,26 +225,13 @@ def _generate_audio_step(output_dir: Path, voice: str) -> None:
     logger.info(f"Generated audio: {result.total_duration:.2f}s with voice '{voice}'")
 
 
-def _generate_videos_step(
-    output_dir: Path, max_workers: int, merge: bool = True
-) -> None:
-    """Execute the generate-videos step."""
-    # Load audio metadata
-    metadata_path = output_dir / "audio_metadata.json"
+def _generate_frames_step(output_dir: Path) -> None:
+    """Execute the generate-frames step."""
+    generate_frames_artifacts(output_dir)
+    logger.info("Generated frames.json and HTML frame files")
 
-    # Generate videos with merging
-    result = generate_videos(
-        metadata_path,
-        output_dir=None,
-        max_workers=max_workers,
-        poll_interval=1,
-        merge=merge,
-    )
 
-    # Save video metadata
-    video_metadata_file = Path(result.output_dir) / "video_metadata.json"
-    save_video_metadata(result, video_metadata_file)
-
-    logger.info(f"Generated {result.total_clips} video clips")
-    if merge:
-        logger.info(f"Final merged video created")
+def _build_presentation_step(output_dir: Path) -> None:
+    """Execute the build-presentation step."""
+    build_presentation(output_dir)
+    logger.info("Built presentation.json from frames and audio metadata")

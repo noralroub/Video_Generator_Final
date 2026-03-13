@@ -830,10 +830,9 @@ def home(request):
 def _get_completed_steps_from_progress(progress_percent: int) -> list:
     """Convert progress percent to list of completed step names."""
     steps = [
-        ("fetch-paper", 25),
-        ("generate-script", 50),
-        ("generate-audio", 75),
-        ("generate-videos", 100),
+        ("fetch-paper", 33),
+        ("generate-script", 66),
+        ("generate-audio", 100),
     ]
     
     completed_steps = []
@@ -857,11 +856,20 @@ def _get_pipeline_progress(output_dir: Path) -> Dict:
     - error: error message if failed (from Celery task)
     - error_type: user-friendly error type
     """
+    # Sprint 2: track all five logical steps in the new pipeline
     steps = [
         ("fetch-paper", lambda d: (d / "paper.json").exists()),
         ("generate-script", lambda d: (d / "script.json").exists()),
-        ("generate-audio", lambda d: (d / "audio.wav").exists() and (d / "audio_metadata.json").exists()),
-        ("generate-videos", lambda d: (d / "clips" / ".videos_complete").exists() or (d / "final_video.mp4").exists()),
+        (
+            "generate-frames",
+            lambda d: (d / "frames.json").exists() and (d / "frames").exists(),
+        ),
+        (
+            "generate-audio",
+            lambda d: (d / "audio.wav").exists()
+            and (d / "audio_metadata.json").exists(),
+        ),
+        ("build-presentation", lambda d: (d / "presentation.json").exists()),
     ]
     
     completed_steps = []
@@ -879,37 +887,15 @@ def _get_pipeline_progress(output_dir: Path) -> Dict:
     completed_count = len(completed_steps)
     progress_percent = int((completed_count / total_steps) * 100)
     
-    # Check if pipeline failed (has log but no final video and not currently running)
+    # Check if pipeline failed (has log but not currently running)
     log_path = output_dir / "pipeline.log"
-    final_video = output_dir / "final_video.mp4"
     
     error = None
     error_type = None
     status = "pending"  # Initialize status
     
-    # Priority 0: Check if final video exists (completed) - this is the most definitive check
-    # Check this FIRST before anything else - if video exists, we're done
-    # Check both local filesystem and R2 storage
-    video_exists = False
-    if settings.USE_CLOUD_STORAGE:
-        # Check R2 storage via database
-        try:
-            from web.models import VideoGenerationJob
-            pmid = output_dir.name
-            job = VideoGenerationJob.objects.filter(paper_id=pmid).order_by('-created_at').first()
-            if job and job.final_video:
-                try:
-                    video_exists = job.final_video.storage.exists(job.final_video.name)
-                except Exception:
-                    pass
-        except Exception:
-            pass
-    
-    # Fallback to local filesystem check
-    if not video_exists:
-        video_exists = output_dir.exists() and final_video.exists()
-    
-    if video_exists:
+    # If all steps are complete, treat pipeline as completed (no final video required)
+    if completed_count == total_steps:
         status = "completed"
         return {
             "current_step": None,
@@ -972,30 +958,7 @@ def _get_pipeline_progress(output_dir: Path) -> Dict:
             error_type = task_result.get("error_type")
             # Don't check anything else - task result is definitive
         elif task_status == "completed":
-            # Verify final video exists to confirm completion (check both R2 and local)
-            video_exists = False
-            if settings.USE_CLOUD_STORAGE:
-                # Check R2 storage via database
-                try:
-                    from web.models import VideoGenerationJob
-                    job = VideoGenerationJob.objects.filter(paper_id=pmid).order_by('-created_at').first()
-                    if job and job.final_video:
-                        try:
-                            video_exists = job.final_video.storage.exists(job.final_video.name)
-                        except Exception:
-                            pass
-                except Exception:
-                    pass
-            
-            # Fallback to local filesystem check
-            if not video_exists:
-                video_exists = final_video.exists()
-            
-            if video_exists:
-                status = "completed"
-            else:
-                # Task says completed but video doesn't exist - might still be processing
-                status = "running"
+            status = "completed"
         elif task_status == "running":
             # Task says running, but check log for failure indicators (task might have failed but not updated status yet)
             if log_path.exists():
@@ -1070,30 +1033,7 @@ def _get_pipeline_progress(output_dir: Path) -> Dict:
                         status = "running"
             else:
                 status = "pending"
-    # Priority 2: Check if final video exists (completed) - check both R2 and local
-    elif not task_result or task_result.get("status") != "failed":
-        video_exists = False
-        if settings.USE_CLOUD_STORAGE:
-            # Check R2 storage via database
-            try:
-                from web.models import VideoGenerationJob
-                job = VideoGenerationJob.objects.filter(paper_id=pmid).order_by('-created_at').first()
-                if job and job.final_video:
-                    try:
-                        video_exists = job.final_video.storage.exists(job.final_video.name)
-                    except Exception:
-                        pass
-            except Exception:
-                pass
-        
-        # Fallback to local filesystem check
-        if not video_exists:
-            video_exists = final_video.exists()
-        
-        if video_exists:
-            status = "completed"
-    
-    # Priority 3: Check if log exists and determine if still running or failed
+    # Priority 2: Check if log exists and determine if still running or failed
     if status != "completed" and log_path.exists():
         try:
             import time
@@ -1170,7 +1110,7 @@ def _get_pipeline_progress(output_dir: Path) -> Dict:
     # Priority 4: If there's a current step, it's running
     elif current_step:
         status = "running"
-    # Priority 5: Otherwise pending
+    # Priority 4: Otherwise pending
     else:
         status = "pending"
     
@@ -1305,7 +1245,6 @@ def upload_paper(request):
 def pipeline_status(request, pmid: str):
     """Return a small status page for a running pipeline and a JSON status endpoint."""
     output_dir = Path(settings.MEDIA_ROOT) / pmid
-    final_video = output_dir / "final_video.mp4"
     log_path = output_dir / "pipeline.log"
 
     # Try to get progress from database first
@@ -1418,12 +1357,8 @@ def pipeline_status(request, pmid: str):
                     "total_steps": 4,
                 }
     
-    # Check if video exists (cloud storage or local)
+    # Check if video exists (cloud storage or local) - optional for legacy MP4 flows
     final_video_exists, final_video_url = _check_video_exists(pmid, request.user)
-    
-    # Ensure status is "completed" if video exists and progress is 100%
-    if final_video_exists and progress.get("progress_percent", 0) >= 100:
-        progress["status"] = "completed"
 
     if request.GET.get("_json"):
         # JSON status endpoint - use the new progress tracking
@@ -1452,13 +1387,7 @@ def pipeline_status(request, pmid: str):
         except Exception:
             pass  # Ignore errors getting timestamp
         
-        # CRITICAL FIX: If status is completed or progress is 100%, ensure final_video_url is set
-        if (status["status"] == "completed" or status["progress_percent"] >= 100):
-            # Re-check video existence - might have been created after initial check
-            final_video_exists, final_video_url = _check_video_exists(pmid, request.user)
-            if final_video_exists and final_video_url:
-                status["final_video_url"] = final_video_url
-                status["final_video"] = True
+        # For HTML/Audio pipeline, completion is based on script+audio; video URL is optional
         
         # Add error information if available
         if "error" in progress:
@@ -1515,13 +1444,53 @@ def pipeline_status(request, pmid: str):
 
 
 def pipeline_result(request, pmid: str):
-    # Check if video exists (cloud storage or local)
-    final_video_exists, video_url = _check_video_exists(pmid, request.user if hasattr(request, 'user') else None)
-    
-    if final_video_exists and video_url:
-        return render(request, "result.html", {"pmid": pmid, "video_url": video_url})
-    else:
+    """Display HTML frames + audio presentation for a completed pipeline run."""
+    output_dir = Path(settings.MEDIA_ROOT) / pmid
+    presentation_path = output_dir / "presentation.json"
+
+    if not presentation_path.exists():
+        # Presentation not ready yet – keep existing status flow
         return HttpResponseRedirect(reverse("pipeline_status", args=[pmid]))
+
+    try:
+        with open(presentation_path, "r", encoding="utf-8") as f:
+            presentation = json.load(f)
+    except Exception:
+        # If we can't read or parse the presentation, fall back to status page
+        return HttpResponseRedirect(reverse("pipeline_status", args=[pmid]))
+
+    frames_meta = presentation.get("frames", [])
+    frames = []
+
+    for frame_meta in frames_meta:
+        html_rel_path = frame_meta.get("frame_html_path")
+        if not html_rel_path:
+            continue
+        html_path = output_dir / html_rel_path
+        try:
+            html = html_path.read_text(encoding="utf-8")
+        except OSError:
+            html = "<div>Frame HTML not found.</div>"
+
+        frames.append(
+            {
+                "scene_id": frame_meta.get("scene_id"),
+                "start_time": frame_meta.get("start_time"),
+                "end_time": frame_meta.get("end_time"),
+                "html": html,
+            }
+        )
+
+    # Audio is stored alongside other artifacts in MEDIA_ROOT
+    audio_rel = presentation.get("audio", "audio.wav")
+    audio_url = f"{settings.MEDIA_URL}{pmid}/{audio_rel}"
+
+    context = {
+        "pmid": pmid,
+        "audio_url": audio_url,
+        "frames": frames,
+    }
+    return render(request, "result.html", context)
 
 
 @login_required
@@ -1585,8 +1554,6 @@ def serve_video(request, pmid: str):
         else:
             # Local development fallback
             output_dir = Path(settings.MEDIA_ROOT) / pmid
-            final_video = output_dir / "final_video.mp4"
-            
             if final_video.exists():
                 return FileResponse(
                     open(final_video, 'rb'),
@@ -1751,12 +1718,6 @@ def api_start_generation(request):
                 status=500
             )
         
-        if not os.getenv("RUNWAYML_API_SECRET"):
-            return JsonResponse(
-                {"success": False, "error": "RUNWAYML_API_SECRET environment variable not set"},
-                status=500
-            )
-        
         # Start pipeline
         output_dir = Path(settings.MEDIA_ROOT) / paper_id
         
@@ -1905,11 +1866,7 @@ def api_status(request, paper_id: str):
     if progress is None:
         progress = _get_pipeline_progress(output_dir)
     
-    final_video = output_dir / "final_video.mp4"
     final_video_url = None
-    if final_video.exists():
-        final_video_url = f"{settings.MEDIA_URL}{paper_id}/final_video.mp4"
-    
     # Get log tail
     log_path = output_dir / "pipeline.log"
     log_tail = ""

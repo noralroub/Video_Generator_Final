@@ -166,12 +166,11 @@ def create_task_files(output_dir: Path, task_id: str, status: str = "running"):
 
 def update_job_record(paper_id: str, step_name: str, task_id: str, user: User = None):
     """Create or update a VideoGenerationJob record in the database."""
-    # Map step names to progress percentages (4 steps: 25%, 50%, 75%, 100%)
+    # Map step names to progress percentages (Sprint 1: 3 real steps to 100%)
     step_progress = {
-        "fetch-paper": (25, "fetch-paper"),
-        "generate-script": (50, "generate-script"),
-        "generate-audio": (75, "generate-audio"),
-        "generate-videos": (100, None),  # None means completed, no current step
+        "fetch-paper": (33, "fetch-paper"),
+        "generate-script": (66, "generate-script"),
+        "generate-audio": (100, None),
     }
     
     progress_percent, current_step = step_progress.get(step_name, (0, step_name))
@@ -242,7 +241,7 @@ def simulate_progress(paper_id: str, step_name: str, user: User = None):
     print()
     
     # Create files for all steps up to and including the target step
-    steps = ["fetch-paper", "generate-script", "generate-audio", "generate-videos"]
+    steps = ["fetch-paper", "generate-script", "generate-audio"]
     target_index = steps.index(step_name) if step_name in steps else -1
     
     if target_index == -1:
@@ -268,7 +267,7 @@ def simulate_progress(paper_id: str, step_name: str, user: User = None):
 
 def auto_progress(paper_id: str, delay: int = 3, user: User = None):
     """Automatically progress through all steps with delays."""
-    steps = ["fetch-paper", "generate-script", "generate-audio", "generate-videos"]
+    steps = ["fetch-paper", "generate-script", "generate-audio"]
     
     print(f"\n[INFO] Auto-progressing through all steps for: {paper_id}")
     print(f"   Delay between steps: {delay} seconds")

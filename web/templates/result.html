@@ -3,22 +3,109 @@
 {% block title %}Result - {{ pmid }} - KyleAI{% endblock %}
 
 {% block content %}
-  <h1>Video Result</h1>
-  <p>Your AI-generated video for paper <strong>{{ pmid }}</strong> is ready!</p>
-  
-  <div class="button-group">
-    <a href="{{ video_url }}" class="btn-primary">Download Video</a>
-  </div>
+  <h1>Presentation Result</h1>
+  <p>Your AI-generated narrated presentation for paper <strong>{{ pmid }}</strong> is ready.</p>
 
-  <div class="video-preview">
-    <video controls>
-      <source src="{{ video_url }}" type="video/mp4">
-      Your browser does not support the video tag.
-    </video>
-  </div>
+  {% if audio_url %}
+  <section class="player-section">
+    <h2>Narration</h2>
+    <audio controls src="{{ audio_url }}" style="width: 100%; max-width: 640px;">
+      Your browser does not support the audio element.
+    </audio>
+  </section>
+  {% endif %}
+
+  <section class="frames-section">
+    <h2>Frames</h2>
+    <p class="frames-hint">Scroll through the vertical 9:16 frames below. Audio timing is encoded in the presentation metadata.</p>
+
+    <div class="frames-grid">
+      {% for frame in frames %}
+        <article class="frame-item">
+          <div class="frame-index">Scene {{ forloop.counter }}</div>
+          <div class="frame-html">
+            {{ frame.html|safe }}
+          </div>
+          {% if frame.start_time is not None and frame.end_time is not None %}
+          <div class="frame-timing">
+            {{ frame.start_time|floatformat:1 }}s → {{ frame.end_time|floatformat:1 }}s
+          </div>
+          {% endif %}
+        </article>
+      {% empty %}
+        <p>No frames were generated for this paper.</p>
+      {% endfor %}
+    </div>
+  </section>
 
   <div class="button-group">
-    <a href="/upload/" class="btn-primary">Generate another video</a>
+    <a href="/upload/" class="btn-primary">Generate another presentation</a>
     <a href="/my-videos/" class="btn-secondary">My Videos</a>
   </div>
+
+  <style>
+    .player-section,
+    .frames-section {
+      margin-top: 1.5rem;
+      margin-bottom: 1.5rem;
+    }
+
+    .frames-hint {
+      color: #6b7280;
+      margin-bottom: 0.75rem;
+      font-size: 0.9rem;
+    }
+
+    .frames-grid {
+      display: flex;
+      flex-direction: column;
+      gap: 1.5rem;
+      max-width: 900px;
+    }
+
+    .frame-item {
+      border-radius: 1rem;
+      padding: 0.75rem 0.75rem 0.5rem;
+      background: radial-gradient(circle at top left, #111827, #020617);
+      box-shadow: 0 18px 40px rgba(15, 23, 42, 0.55);
+      color: #f9fafb;
+    }
+
+    .frame-index {
+      font-size: 0.8rem;
+      text-transform: uppercase;
+      letter-spacing: 0.12em;
+      color: #9ca3af;
+      margin-bottom: 0.4rem;
+    }
+
+    .frame-html {
+      background: #020617;
+      border-radius: 0.75rem;
+      overflow: hidden;
+    }
+
+    .frame-html iframe,
+    .frame-html > * {
+      width: 100%;
+      border: none;
+      display: block;
+    }
+
+    .frame-timing {
+      margin-top: 0.4rem;
+      font-size: 0.8rem;
+      color: #9ca3af;
+    }
+
+    @media (max-width: 768px) {
+      .frames-grid {
+        padding-left: 0;
+        padding-right: 0;
+      }
+      .frame-item {
+        box-shadow: 0 12px 30px rgba(15, 23, 42, 0.55);
+      }
+    }
+  </style>
 {% endblock %}
