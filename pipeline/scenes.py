@@ -6,7 +6,7 @@ import os
 import re
 from dataclasses import dataclass, asdict
 from pathlib import Path
-from typing import Literal, List
+from typing import Any, Literal, List
 
 from google import genai
 from google.genai import types
@@ -24,6 +24,8 @@ class Scene:
     text: str
     visual_type: Literal["generated"]
     visual_content: str
+    source_table: dict[str, Any] | None = None
+    source_figure: dict[str, Any] | None = None
 
 
 def generate_scenes(paper_data: dict, api_key: str | None = None) -> List[Scene]:
@@ -65,12 +67,39 @@ def generate_scenes(paper_data: dict, api_key: str | None = None) -> List[Scene]
         full_text = full_text[:MAX_PAPER_LENGTH]
 
     # Construct prompt
+    evidence_items = []
+    for figure in (paper_data.get("figures") or [])[:6]:
+        evidence_items.append(
+            {
+                "type": "figure",
+                "id": figure.get("id") or "figure",
+                "caption": (figure.get("caption") or "")[:900],
+            }
+        )
+    for table in (paper_data.get("tables") or [])[:6]:
+        evidence_items.append(
+            {
+                "type": "table",
+                "id": table.get("label") or table.get("id") or "table",
+                "caption": (table.get("caption") or "")[:700],
+                "preview": (table.get("text") or "")[:1000],
+            }
+        )
+    evidence_text = (
+        json.dumps(evidence_items, indent=2, ensure_ascii=False)
+        if evidence_items
+        else "No structured figures or tables were extracted."
+    )
+
     prompt = f"""You are creating a short social media video script (TikTok/Instagram style) that tells the story of a scientific paper.
 
 Paper Title: {paper_data['title']}
 
 Paper Content:
 {full_text}
+
+Available source evidence from the paper:
+{evidence_text}
 
 Create 4-10 scenes that tell a compelling story following this narrative structure:
 
@@ -108,6 +137,7 @@ Video Generation Content Policy:
 - Example: Instead of "person holding a syringe", use "person looking concerned while making a health decision"
 
 For each scene, write a clear Veo video generation prompt that describes the visual content.
+If a specific table or figure from the source evidence would make a scene clearer, mention that source by label in visual_content and briefly describe what should be shown. Only use tables/figures when they support the actual narration; otherwise use abstract visuals.
 
 Return ONLY a JSON object with this structure:
 {{
@@ -223,6 +253,8 @@ Return ONLY a JSON object with this structure:
                         text=scene_data["text"],
                         visual_type=scene_data["visual_type"],
                         visual_content=scene_data["visual_content"],
+                        source_table=scene_data.get("source_table"),
+                        source_figure=scene_data.get("source_figure"),
                     )
                 )
 
@@ -303,7 +335,16 @@ def load_scenes(input_path: Path) -> List[Scene]:
         with open(input_path, "r", encoding="utf-8") as f:
             scenes_data = json.load(f)
 
-        scenes = [Scene(**scene_data) for scene_data in scenes_data]
+        scenes = [
+            Scene(
+                text=scene_data.get("text", ""),
+                visual_type=scene_data.get("visual_type", "generated"),
+                visual_content=scene_data.get("visual_content", ""),
+                source_table=scene_data.get("source_table"),
+                source_figure=scene_data.get("source_figure"),
+            )
+            for scene_data in scenes_data
+        ]
         logger.info(f"Loaded {len(scenes)} scenes from {input_path}")
 
         return scenes

@@ -245,8 +245,8 @@ def generate_audio_cmd(paper_dir, voice):
 
     The audio generation uses proportional splitting:
     1. Generate full continuous TTS for natural flow
-    2. Generate individual scenes in parallel for timing proportions
-    3. Calculate scene boundaries based on proportional durations
+    2. Estimate scene timing from narration text
+    3. Calculate scene boundaries based on estimated proportions
 
     Example:
         python main.py generate-audio ./my_paper

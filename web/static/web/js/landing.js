@@ -82,14 +82,16 @@ document.addEventListener('DOMContentLoaded', function() {
     }
 
     // Navbar scroll effect
-    const navbar = document.querySelector('.navbar');
-    window.addEventListener('scroll', function() {
-        if (window.pageYOffset > 50) {
-            navbar.style.boxShadow = '0 4px 20px rgba(30, 58, 95, 0.1)';
-        } else {
-            navbar.style.boxShadow = 'none';
-        }
-    });
+    const navbar = document.querySelector('.site-header');
+    if (navbar) {
+        window.addEventListener('scroll', function() {
+            if (window.pageYOffset > 50) {
+                navbar.style.boxShadow = '0 4px 20px rgba(0, 0, 0, 0.1)';
+            } else {
+                navbar.style.boxShadow = 'none';
+            }
+        });
+    }
 
     // Button hover effects
     const buttons = document.querySelectorAll('.btn');
@@ -109,7 +111,7 @@ document.addEventListener('DOMContentLoaded', function() {
         let angle = 0;
         setInterval(() => {
             angle += 0.5;
-            const gradient = `linear-gradient(${angle}deg, #1e3a5f, #2d5a8c, #4a90e2)`;
+            const gradient = `linear-gradient(${angle}deg, #111111, #2b2b2b, #555555)`;
             // Subtle animation - don't overdo it
         }, 50);
     }

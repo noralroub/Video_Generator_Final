@@ -1,5 +1,9 @@
 import os
 import logging
+import json
+import mimetypes
+import re
+import shutil
 from pathlib import Path
 from typing import Dict, Optional
 import urllib.request
@@ -11,19 +15,289 @@ from django.utils import timezone
 from datetime import timedelta
 
 logger = logging.getLogger(__name__)
+from django.contrib import messages
 from django.contrib.auth import login
-from django.contrib.auth.decorators import login_required
-from django.contrib.auth.forms import UserCreationForm
-from django.http import JsonResponse, HttpResponse, HttpResponseRedirect, HttpResponseBadRequest
+from django.contrib.auth.decorators import login_required, user_passes_test
+from django.http import JsonResponse, HttpResponse, HttpResponseRedirect, HttpResponseBadRequest, Http404
 from django.shortcuts import render, redirect
 from django.urls import reverse
-from django.views.decorators.http import require_http_methods
+from django.views.decorators.http import require_http_methods, require_POST
 from django.views.decorators.csrf import csrf_exempt
 
-from .forms import PaperUploadForm
+from .forms import EmailRequiredUserCreationForm, PaperUploadForm
 from .tasks import generate_video_task, get_task_status, update_job_progress_from_files, test_r2_storage_write_task
 from celery.result import AsyncResult
 from config.celery import app as celery_app
+
+
+STEP_LABELS = {
+    "fetch-paper": "Fetching paper",
+    "generate-script": "Writing narration script",
+    "review-script": "Reviewing generated script",
+    "generate-frames": "Designing visual scenes",
+    "generate-audio": "Generating narration audio",
+    "build-presentation": "Building interactive presentation",
+    "starting": "Starting generation",
+}
+
+
+def _step_label(step: Optional[str]) -> str:
+    if not step:
+        return ""
+    return STEP_LABELS.get(step, step.replace("-", " ").title())
+
+
+def _generation_limit_state(user) -> Dict[str, int | bool]:
+    """Return the current authenticated user's daily and concurrent usage."""
+    from web.models import VideoGenerationJob
+
+    if not user or not user.is_authenticated:
+        return {
+            "daily_limit": getattr(settings, "GENERATION_DAILY_LIMIT", 5),
+            "daily_used": 0,
+            "daily_remaining": 0,
+            "concurrent_limit": getattr(settings, "GENERATION_CONCURRENT_LIMIT", 1),
+            "concurrent_used": 0,
+            "limited": False,
+        }
+
+    today_start = timezone.localtime().replace(hour=0, minute=0, second=0, microsecond=0)
+    daily_limit = getattr(settings, "GENERATION_DAILY_LIMIT", 5)
+    concurrent_limit = getattr(settings, "GENERATION_CONCURRENT_LIMIT", 1)
+    daily_used = VideoGenerationJob.objects.filter(user=user, created_at__gte=today_start).count()
+    concurrent_used = VideoGenerationJob.objects.filter(user=user, status__in=["pending", "running"]).count()
+    daily_remaining = max(daily_limit - daily_used, 0)
+    return {
+        "daily_limit": daily_limit,
+        "daily_used": daily_used,
+        "daily_remaining": daily_remaining,
+        "concurrent_limit": concurrent_limit,
+        "concurrent_used": concurrent_used,
+        "limited": daily_used >= daily_limit or concurrent_used >= concurrent_limit,
+    }
+
+
+def _generation_limit_error(user) -> Optional[str]:
+    state = _generation_limit_state(user)
+    if state["concurrent_used"] >= state["concurrent_limit"]:
+        return (
+            "You already have a generation in progress. Please wait for it to finish "
+            "before starting another paper."
+        )
+    if state["daily_used"] >= state["daily_limit"]:
+        return (
+            f"You have reached today's limit of {state['daily_limit']} generations. "
+            "Please try again tomorrow."
+        )
+    return None
+
+
+def _can_manage_paper(user, pmid: str) -> bool:
+    """Only the owner or staff can retry/delete generated artifacts."""
+    if not user or not user.is_authenticated:
+        return False
+    if user.is_staff:
+        return True
+    from web.models import VideoGenerationJob
+
+    return VideoGenerationJob.objects.filter(user=user, paper_id=pmid).exists()
+
+
+def _load_script_scenes(script_path: Path) -> list[dict]:
+    """Load editable scene dictionaries from script.json."""
+    with open(script_path, "r", encoding="utf-8") as f:
+        data = json.load(f)
+    if isinstance(data, dict):
+        data = data.get("scenes", [])
+    if not isinstance(data, list):
+        raise ValueError("script.json must contain a list of scenes")
+    return data
+
+
+def _pmc_image_viewer_url(pmcid: str, image_name: str) -> str:
+    """Build NCBI's image viewer URL for older PMC image assets."""
+    match = re.search(r"PMC(\d+)", pmcid, re.IGNORECASE)
+    if not match:
+        return ""
+    numeric_id = match.group(1)
+    pmc_bucket = f"PMC{numeric_id[0]}"
+    return (
+        "https://www.ncbi.nlm.nih.gov/core/lw/2.0/html/tileshop_pmc/"
+        f"tileshop_pmc_inline.html?title=Click%20on%20image%20to%20zoom&p={pmc_bucket}&id={numeric_id}_{image_name}"
+    )
+
+
+def _load_pmc_article_image_urls(pmcid: str) -> dict[str, str]:
+    """Map PMC image file names to embeddable CDN image URLs from the article page."""
+    match = re.search(r"PMC\d+", pmcid, re.IGNORECASE)
+    if not match:
+        return {}
+    article_url = f"https://pmc.ncbi.nlm.nih.gov/articles/{match.group(0).upper()}/"
+    try:
+        with urllib.request.urlopen(article_url, timeout=5) as response:
+            html = response.read().decode("utf-8", errors="ignore")
+    except Exception as exc:
+        logger.warning(f"Could not load PMC article image URLs from {article_url}: {exc}")
+        return {}
+
+    image_urls: dict[str, str] = {}
+    for url in re.findall(r'https://cdn\.ncbi\.nlm\.nih\.gov/pmc/blobs/[^"\']+', html):
+        image_urls[Path(url).name] = url
+    return image_urls
+
+
+def _normalize_figure_snippet(figure: dict, pmcid: str, article_images: dict[str, str]) -> dict:
+    """Return a figure snippet with separate embeddable and source-viewer URLs."""
+    raw_url = figure.get("url") or ""
+    image_name = Path(raw_url).name if raw_url else ""
+    image_url = article_images.get(image_name, raw_url)
+    source_url = figure.get("source_url") or ""
+    if not source_url and image_name:
+        source_url = _pmc_image_viewer_url(pmcid, image_name)
+    return {
+        "id": figure.get("id") or "Figure",
+        "caption": figure.get("caption") or "",
+        "url": image_url or raw_url,
+        "source_url": source_url or image_url or raw_url,
+    }
+
+
+def _ensure_presentation_code_cleanup(html: str) -> str:
+    """Inject a small guard that removes accidental visible CSS/code text."""
+    marker = "data-infodemica-code-cleanup"
+    if marker in html:
+        return html
+
+    cleanup_script = """
+<script data-infodemica-code-cleanup="true">
+(function () {
+  function looksLikeLeakedCode(text) {
+    var normalized = String(text || '').replace(/\\s+/g, ' ').trim();
+    if (!normalized) return false;
+    if (/@keyframes\\b|}\\s*\\.[A-Za-z0-9_-]+\\s*\\{|\\b(animation|transform|opacity|background|font-size|z-index)\\s*:/.test(normalized)) return true;
+    return /[.#]?[A-Za-z0-9_-]+\\s*\\{[^}]{12,}\\}/.test(normalized);
+  }
+
+  function cleanNode(node) {
+    if (!node) return;
+    var skipped = /^(SCRIPT|STYLE|NOSCRIPT|TEXTAREA|SVG)$/;
+    if (node.nodeType === Node.TEXT_NODE) {
+      if (looksLikeLeakedCode(node.nodeValue)) node.nodeValue = '';
+      return;
+    }
+    if (node.nodeType !== Node.ELEMENT_NODE || skipped.test(node.tagName)) return;
+    Array.prototype.slice.call(node.childNodes).forEach(cleanNode);
+  }
+
+  cleanNode(document.body);
+}());
+</script>
+"""
+    if "</body>" in html:
+        return html.replace("</body>", cleanup_script + "</body>", 1)
+    return html + cleanup_script
+
+
+def _source_figure_proxy_url(pmid: str, index: int) -> str:
+    return reverse("source_figure_image", args=[pmid, index])
+
+
+def _source_figure_cache_path(output_dir: Path, index: int, source_url: str) -> Path:
+    suffix = Path(source_url).suffix.lower()
+    if suffix not in {".jpg", ".jpeg", ".png", ".webp", ".gif"}:
+        suffix = ".jpg"
+    return output_dir / "source_figures" / f"figure_{index}{suffix}"
+
+
+def _clear_downstream_artifacts(output_dir: Path) -> None:
+    """Remove generated artifacts that depend on script.json."""
+    for name in [
+        "audio.wav",
+        "audio_metadata.json",
+        "frames.json",
+        "presentation.json",
+        "presentation.html",
+    ]:
+        try:
+            (output_dir / name).unlink()
+        except FileNotFoundError:
+            pass
+    frames_dir = output_dir / "frames"
+    if frames_dir.exists():
+        shutil.rmtree(frames_dir)
+
+
+def _load_source_snippets(output_dir: Path) -> dict:
+    """Load figures, tables, and local PDFs that may help the user edit scenes."""
+    snippets = {"figures": [], "tables": [], "pdfs": []}
+    paper_path = output_dir / "paper.json"
+    if paper_path.exists():
+        try:
+            with open(paper_path, "r", encoding="utf-8") as f:
+                paper_data = json.load(f)
+            article_images = _load_pmc_article_image_urls(output_dir.name) if paper_data.get("figures") else {}
+            snippets["figures"] = [
+                _normalize_figure_snippet(figure, output_dir.name, article_images)
+                for figure in (paper_data.get("figures") or [])[:8]
+            ]
+            snippets["tables"] = [
+                {
+                    "id": table.get("id") or "",
+                    "label": table.get("label") or table.get("id") or "Table",
+                    "caption": table.get("caption") or "",
+                    "text": table.get("text") or "",
+                }
+                for table in (paper_data.get("tables") or [])[:8]
+            ]
+        except Exception as exc:
+            logger.warning(f"Could not load paper evidence snippets from {paper_path}: {exc}")
+
+    if not snippets["tables"] and (output_dir / "paper.xml").exists():
+        try:
+            import xml.etree.ElementTree as ET
+
+            root = ET.parse(output_dir / "paper.xml").getroot()
+            for table_wrap in root.iter():
+                if not (table_wrap.tag.endswith("}table-wrap") or table_wrap.tag == "table-wrap"):
+                    continue
+                label = table_wrap.get("id", "")
+                caption = ""
+                for elem in table_wrap.iter():
+                    if elem.tag.endswith("}label") or elem.tag == "label":
+                        label = "".join(elem.itertext()).strip() or label
+                        break
+                for elem in table_wrap.iter():
+                    if elem.tag.endswith("}caption") or elem.tag == "caption":
+                        caption = " ".join("".join(elem.itertext()).split())
+                        break
+                if caption:
+                    snippets["tables"].append(
+                        {
+                            "id": "",
+                            "label": label or f"Table {len(snippets['tables']) + 1}",
+                            "caption": caption,
+                            "text": "",
+                        }
+                    )
+                if len(snippets["tables"]) >= 8:
+                    break
+        except Exception as exc:
+            logger.warning(f"Could not parse XML table snippets: {exc}")
+
+    for pdf_path in sorted(output_dir.glob("*.pdf"))[:4]:
+        snippets["pdfs"].append(
+            {
+                "name": pdf_path.name,
+                "url": f"{settings.MEDIA_URL}{output_dir.name}/{pdf_path.name}",
+            }
+        )
+
+    return snippets
+
+
+def _can_access_debug_tools(user) -> bool:
+    """Allow diagnostics for logged-in local users, but staff-only in production."""
+    return user.is_authenticated and (settings.DEBUG or user.is_staff)
 
 
 def _get_user_friendly_error(error_type: str, error_detail: str = "") -> str:
@@ -40,7 +314,10 @@ def _get_user_friendly_error(error_type: str, error_detail: str = "") -> str:
         "paper_not_found": "Paper not found in PubMed Central. Please check the PubMed ID or PMC ID and ensure the paper is open-access.",
         "api_key_error": "API key invalid or expired. Please contact the administrator.",
         "timeout": "Pipeline timeout. The video generation took too long. Please try again or contact support.",
-        "rate_limit": "API rate limit exceeded. Please wait a few minutes and try again.",
+        "rate_limit": (
+            "The AI provider quota or rate limit was reached. Wait a few minutes, then retry this paper. "
+            "If this keeps happening, enable billing or request higher limits with Anthropic/Gemini."
+        ),
         "pipeline_error": f"Video generation failed: {error_detail[:200] if error_detail else 'Unknown error'}",
         "task_error": "Task execution error. Please try again or contact support.",
         "unknown_error": f"An error occurred during video generation: {error_detail[:200] if error_detail else 'Unknown error'}",
@@ -224,7 +501,7 @@ def _validate_paper_id(paper_id: str) -> tuple[bool, str]:
             # It's a PMCID - try to fetch it directly
             pmcid = paper_id.upper()
             pmc_number = pmcid.replace("PMC", "")
-            url = f"https://eutils.ncbi.nlm.nih.gov/entrez/eutils/efetch.fcgi?db=pmc&id={pmc_number}&retmode=xml"
+            url = f"https://www.ncbi.nlm.nih.gov/entrez/eutils/efetch.fcgi?db=pmc&id={pmc_number}&retmode=xml"
             
             try:
                 with urllib.request.urlopen(url, timeout=10) as response:
@@ -244,7 +521,7 @@ def _validate_paper_id(paper_id: str) -> tuple[bool, str]:
                 return False, f"Error validating PMC ID: {str(e)}"
         else:
             # It's a PMID - look up the PMCID
-            url = f"https://eutils.ncbi.nlm.nih.gov/entrez/eutils/efetch.fcgi?db=pubmed&id={paper_id}&retmode=xml"
+            url = f"https://www.ncbi.nlm.nih.gov/entrez/eutils/efetch.fcgi?db=pubmed&id={paper_id}&retmode=xml"
             
             try:
                 with urllib.request.urlopen(url, timeout=10) as response:
@@ -266,7 +543,7 @@ def _validate_paper_id(paper_id: str) -> tuple[bool, str]:
                     
                     # Verify the PMCID is accessible
                     pmc_number = pmcid.replace("PMC", "")
-                    pmc_url = f"https://eutils.ncbi.nlm.nih.gov/entrez/eutils/efetch.fcgi?db=pmc&id={pmc_number}&retmode=xml"
+                    pmc_url = f"https://www.ncbi.nlm.nih.gov/entrez/eutils/efetch.fcgi?db=pmc&id={pmc_number}&retmode=xml"
                     
                     try:
                         with urllib.request.urlopen(pmc_url, timeout=10) as pmc_response:
@@ -293,6 +570,7 @@ def health(request):
     return JsonResponse({"status": "ok"})
 
 
+@user_passes_test(_can_access_debug_tools)
 def static_debug(request):
     """Debug endpoint to check static files configuration"""
     from django.conf import settings
@@ -308,7 +586,8 @@ def static_debug(request):
             "STATIC_ROOT_exists": static_root.exists(),
             "css_file_path": str(css_file),
             "css_file_exists": css_file.exists(),
-            "STATICFILES_STORAGE": settings.STATICFILES_STORAGE,
+            "STATICFILES_STORAGE": getattr(settings, "STATICFILES_STORAGE", None),
+            "STORAGES": getattr(settings, "STORAGES", {}),
             "DEBUG": settings.DEBUG,
             "whitenoise_in_middleware": "whitenoise.middleware.WhiteNoiseMiddleware" in settings.MIDDLEWARE,
         }
@@ -345,6 +624,7 @@ def static_debug(request):
         return JsonResponse({"error": str(e), "type": type(e).__name__}, status=500)
 
 
+@user_passes_test(_can_access_debug_tools)
 def test_r2_storage(request):
     """
     Test endpoint to verify R2 cloud storage is accessible from both Celery and Server.
@@ -597,6 +877,7 @@ def test_r2_storage(request):
     return response
 
 
+@user_passes_test(_can_access_debug_tools)
 def debug_video_files(request, pmid: str):
     """
     Debug endpoint to list all files in the video output directory.
@@ -830,9 +1111,11 @@ def home(request):
 def _get_completed_steps_from_progress(progress_percent: int) -> list:
     """Convert progress percent to list of completed step names."""
     steps = [
-        ("fetch-paper", 33),
-        ("generate-script", 66),
-        ("generate-audio", 100),
+        ("fetch-paper", 20),
+        ("generate-script", 40),
+        ("generate-frames", 60),
+        ("generate-audio", 80),
+        ("build-presentation", 100),
     ]
     
     completed_steps = []
@@ -958,7 +1241,13 @@ def _get_pipeline_progress(output_dir: Path) -> Dict:
             error_type = task_result.get("error_type")
             # Don't check anything else - task result is definitive
         elif task_status == "completed":
-            status = "completed"
+            return {
+                "current_step": None,
+                "completed_steps": [step_name for step_name, _ in steps],
+                "progress_percent": 100,
+                "status": "completed",
+                "total_steps": total_steps,
+            }
         elif task_status == "running":
             # Task says running, but check log for failure indicators (task might have failed but not updated status yet)
             if log_path.exists():
@@ -1131,7 +1420,12 @@ def _get_pipeline_progress(output_dir: Path) -> Dict:
     return result
 
 
-def _start_pipeline_async(pmid: str, output_dir: Path, user_id: Optional[int] = None):
+def _start_pipeline_async(
+    pmid: str,
+    output_dir: Path,
+    user_id: Optional[int] = None,
+    review_required: Optional[bool] = None,
+):
     """Start the video generation pipeline using Celery task queue.
 
     This uses Celery to run the pipeline asynchronously, which allows
@@ -1141,9 +1435,13 @@ def _start_pipeline_async(pmid: str, output_dir: Path, user_id: Optional[int] = 
         pmid: PubMed ID or paper identifier
         output_dir: Output directory path
         user_id: Optional user ID to associate with the job
+        review_required: Pause after script generation when True.
     """
+    if review_required is None:
+        review_required = getattr(settings, "SCRIPT_REVIEW_REQUIRED", True)
+
     # Start Celery task
-    task = generate_video_task.delay(pmid, str(output_dir), user_id)
+    task = generate_video_task.delay(pmid, str(output_dir), user_id, review_required)
     
     # Store task ID in a file so we can check status via Celery's result backend
     task_id_file = output_dir / "task_id.txt"
@@ -1196,39 +1494,39 @@ def _start_pipeline_async(pmid: str, output_dir: Path, user_id: Optional[int] = 
 @login_required
 def upload_paper(request):
     """Simple UI to accept a PubMed ID/PMCID and start the pipeline."""
+    require_access_code = getattr(settings, "REQUIRE_VIDEO_ACCESS_CODE", True)
+    limit_state = _generation_limit_state(request.user)
     if request.method == "POST":
-        form = PaperUploadForm(request.POST)
+        form = PaperUploadForm(request.POST, require_access_code=require_access_code)
         if form.is_valid():
-            # Validate access code
-            access_code = form.cleaned_data.get("access_code", "")
-            try:
-                if not _validate_access_code(access_code):
-                    form.add_error("access_code", "Invalid access code. Please check and try again.")
-                    return render(request, "upload.html", {"form": form})
-            except ValueError as e:
-                # Server misconfiguration - access code not set
-                form.add_error(None, f"Server configuration error: {e}")
-                return render(request, "upload.html", {"form": form})
+            if require_access_code:
+                access_code = form.cleaned_data.get("access_code", "")
+                try:
+                    if not _validate_access_code(access_code):
+                        form.add_error("access_code", "Invalid access code. Please check and try again.")
+                        return render(request, "upload.html", {"form": form, "generation_limits": limit_state})
+                except ValueError as e:
+                    form.add_error(None, f"Server configuration error: {e}")
+                    return render(request, "upload.html", {"form": form, "generation_limits": limit_state})
+
+            limit_error = _generation_limit_error(request.user)
+            if limit_error:
+                form.add_error(None, limit_error)
+                return render(request, "upload.html", {"form": form, "generation_limits": _generation_limit_state(request.user)})
             
             pmid = form.cleaned_data.get("paper_id")
             
             if not pmid:
                 form.add_error("paper_id", "Please provide a PubMed ID or PMCID")
-                return render(request, "upload.html", {"form": form})
+                return render(request, "upload.html", {"form": form, "generation_limits": limit_state})
 
             # Normalize pmid
             pmid = pmid.strip()
             
-            # Skip validation for test IDs in simulation mode (e.g., TEST123, TEST456)
-            # This allows testing the upload flow without validating against PubMed
-            if settings.SIMULATION_MODE and pmid.upper().startswith("TEST"):
-                logger.info(f"Simulation mode: Skipping paper ID validation for test ID: {pmid}")
-            else:
-                # Validate paper ID before starting pipeline
-                is_valid, error_message = _validate_paper_id(pmid)
-                if not is_valid:
-                    form.add_error("paper_id", error_message)
-                    return render(request, "upload.html", {"form": form})
+            # Let the pipeline perform the authoritative fetch. The old preflight
+            # check duplicates NCBI network calls and can fail on transient DNS
+            # errors before generation even starts.
+            logger.info(f"Skipping upload preflight validation for paper ID: {pmid}")
 
             # Start pipeline asynchronously and redirect to status page
             output_dir = Path(settings.MEDIA_ROOT) / pmid
@@ -1237,9 +1535,9 @@ def upload_paper(request):
 
             return HttpResponseRedirect(reverse("pipeline_status", args=[pmid]))
     else:
-        form = PaperUploadForm()
+        form = PaperUploadForm(require_access_code=require_access_code)
 
-    return render(request, "upload.html", {"form": form})
+    return render(request, "upload.html", {"form": form, "generation_limits": limit_state})
 
 
 def pipeline_status(request, pmid: str):
@@ -1284,7 +1582,7 @@ def pipeline_status(request, pmid: str):
                         "current_step": job.current_step,
                         "completed_steps": completed_steps,
                         "progress_percent": job.progress_percent,
-                        "total_steps": 4,
+                        "total_steps": 5,
                     }
                     if job.status == 'failed':
                         progress["error"] = job.error_message
@@ -1311,7 +1609,7 @@ def pipeline_status(request, pmid: str):
                         "current_step": job.current_step,
                         "completed_steps": completed_steps,
                         "progress_percent": job.progress_percent,
-                        "total_steps": 4,
+                        "total_steps": 5,
                     }
                     if job.status == 'failed':
                         progress["error"] = job.error_message
@@ -1319,34 +1617,35 @@ def pipeline_status(request, pmid: str):
             except VideoGenerationJob.DoesNotExist:
                 pass  # Fall through to file-based check
             except Exception as e:
-                import logging
-                logger = logging.getLogger(__name__)
                 logger.warning(f"Error getting progress from database: {e}")
     except Exception as e:
-        import logging
-        logger = logging.getLogger(__name__)
         logger.warning(f"Error getting progress from database: {e}")
 
     # Fallback to file-based progress if database doesn't have it
     if progress is None:
+        final_video_path = output_dir / "final_video.mp4"
         try:
             progress = _get_pipeline_progress(output_dir)
             # If final video exists, mark as completed
-            if final_video.exists() and progress.get("progress_percent", 0) >= 100:
+            if final_video_path.exists() and progress.get("progress_percent", 0) >= 100:
                 progress["status"] = "completed"
         except Exception as e:
             # Fallback progress dict if _get_pipeline_progress fails
-            import logging
-            logger = logging.getLogger(__name__)
             logger.exception(f"Error getting pipeline progress for {pmid}: {e}")
             # If video exists, mark as completed even if we can't get progress
-            if final_video.exists():
+            if final_video_path.exists():
                 progress = {
                     "status": "completed",
                     "current_step": None,
-                    "completed_steps": ["fetch-paper", "generate-script", "generate-audio", "generate-videos"],
+                    "completed_steps": [
+                        "fetch-paper",
+                        "generate-script",
+                        "generate-frames",
+                        "generate-audio",
+                        "build-presentation",
+                    ],
                     "progress_percent": 100,
-                    "total_steps": 4,
+                    "total_steps": 5,
                 }
             else:
                 progress = {
@@ -1354,8 +1653,40 @@ def pipeline_status(request, pmid: str):
                     "current_step": None,
                     "completed_steps": [],
                     "progress_percent": 0,
-                    "total_steps": 4,
+                    "total_steps": 5,
                 }
+    else:
+        task_result = get_task_status(pmid)
+        if task_result:
+            if task_result.get("status") == "completed":
+                progress = _get_pipeline_progress(output_dir)
+            elif task_result.get("status") == "awaiting_review":
+                progress = {
+                    "status": "awaiting_review",
+                    "current_step": "review-script",
+                    "completed_steps": ["fetch-paper", "generate-script"],
+                    "progress_percent": 40,
+                    "total_steps": progress.get("total_steps", 5),
+                }
+            elif task_result.get("status") == "failed":
+                progress = {
+                    "status": "failed",
+                    "current_step": None,
+                    "completed_steps": progress.get("completed_steps", []),
+                    "progress_percent": progress.get("progress_percent", 0),
+                    "total_steps": progress.get("total_steps", 5),
+                    "error": task_result.get("error"),
+                    "error_type": task_result.get("error_type") or "pipeline_error",
+                }
+
+    if (
+        progress
+        and progress.get("current_step") == "review-script"
+        and (output_dir / "script.json").exists()
+    ):
+        progress["status"] = "awaiting_review"
+        progress["completed_steps"] = ["fetch-paper", "generate-script"]
+        progress["progress_percent"] = 40
     
     # Check if video exists (cloud storage or local) - optional for legacy MP4 flows
     final_video_exists, final_video_url = _check_video_exists(pmid, request.user)
@@ -1369,9 +1700,14 @@ def pipeline_status(request, pmid: str):
             "final_video_url": final_video_url,  # Use serve_video endpoint
             "status": progress.get("status", "pending"),
             "current_step": progress.get("current_step"),
+            "current_step_label": _step_label(progress.get("current_step")),
             "completed_steps": progress.get("completed_steps", []),
+            "completed_step_labels": [_step_label(step) for step in progress.get("completed_steps", [])],
             "progress_percent": progress.get("progress_percent", 0),
             "progress_updated_at": None,  # Add timestamp
+            "review_url": reverse("review_script", args=[pmid])
+            if progress.get("status") == "awaiting_review"
+            else None,
         }
         
         # Add progress timestamp if available from job
@@ -1437,7 +1773,12 @@ def pipeline_status(request, pmid: str):
         "final_video_url": final_video_url,
         "log_tail": log_tail,
         "progress": progress,
+        "current_step_label": _step_label(progress.get("current_step")),
+        "completed_step_labels": [_step_label(step) for step in progress.get("completed_steps", [])],
         "error_message": error_message,
+        "can_manage": _can_manage_paper(request.user, pmid),
+        "can_retry": request.user.is_authenticated and progress.get("status") == "failed" and _can_manage_paper(request.user, pmid),
+        "review_url": reverse("review_script", args=[pmid]) if progress.get("status") == "awaiting_review" else None,
     }
 
     return render(request, "status.html", context)
@@ -1445,12 +1786,85 @@ def pipeline_status(request, pmid: str):
 
 def pipeline_result(request, pmid: str):
     """Display HTML frames + audio presentation for a completed pipeline run."""
+    can_manage = _can_manage_paper(request.user, pmid)
     output_dir = Path(settings.MEDIA_ROOT) / pmid
+    html_presentation_path = output_dir / "presentation.html"
+    if html_presentation_path.exists():
+        presentation_html_doc = html_presentation_path.read_text(encoding="utf-8")
+        media_base_url = f"{settings.MEDIA_URL}{pmid}/"
+        if "<base " not in presentation_html_doc.lower():
+            if "<head>" in presentation_html_doc:
+                presentation_html_doc = presentation_html_doc.replace(
+                    "<head>", f'<head><base href="{media_base_url}">', 1
+                )
+            elif "<head " in presentation_html_doc:
+                head_end = presentation_html_doc.find(">", presentation_html_doc.lower().find("<head "))
+                presentation_html_doc = (
+                    presentation_html_doc[: head_end + 1]
+                    + f'<base href="{media_base_url}">'
+                    + presentation_html_doc[head_end + 1 :]
+                )
+        presentation_html_doc = _ensure_presentation_code_cleanup(presentation_html_doc)
+        return render(
+            request,
+            "result.html",
+            {
+                "pmid": pmid,
+                "presentation_html_url": f"{settings.MEDIA_URL}{pmid}/presentation.html",
+                "presentation_html_doc": presentation_html_doc,
+                "frames": [],
+                "audio_url": None,
+                "can_manage": can_manage,
+            },
+        )
+
     presentation_path = output_dir / "presentation.json"
 
     if not presentation_path.exists():
-        # Presentation not ready yet – keep existing status flow
-        return HttpResponseRedirect(reverse("pipeline_status", args=[pmid]))
+        task_result = get_task_status(pmid)
+        if not task_result or task_result.get("status") != "completed":
+            # Presentation not ready yet – keep existing status flow
+            return HttpResponseRedirect(reverse("pipeline_status", args=[pmid]))
+
+        paper_title = "Simulated Paper Title"
+        paper_path = output_dir / "paper.json"
+        if paper_path.exists():
+            try:
+                with open(paper_path, "r", encoding="utf-8") as f:
+                    paper_title = json.load(f).get("title") or paper_title
+            except Exception:
+                pass
+
+        narration = "This simulated run completed successfully. Add real API keys and disable simulation mode to generate the full narrated presentation."
+        script_path = output_dir / "script.json"
+        if script_path.exists():
+            try:
+                with open(script_path, "r", encoding="utf-8") as f:
+                    scenes = json.load(f).get("scenes", [])
+                if scenes:
+                    narration = scenes[0].get("narration") or narration
+            except Exception:
+                pass
+
+        frames = [
+            {
+                "scene_id": 0,
+                "start_time": 0,
+                "end_time": 5,
+                "html": (
+                    "<section style='aspect-ratio:9/16;min-height:520px;"
+                    "display:flex;flex-direction:column;justify-content:center;"
+                    "gap:1rem;padding:2rem;background:#0f172a;color:#f8fafc;"
+                    "font-family:Inter,system-ui,sans-serif;'>"
+                    f"<p style='margin:0;color:#38bdf8;text-transform:uppercase;letter-spacing:.12em;'>Simulation Result</p>"
+                    f"<h1 style='margin:0;font-size:2.5rem;line-height:1.05;'>{paper_title}</h1>"
+                    f"<p style='margin:0;font-size:1.15rem;line-height:1.5;color:#cbd5e1;'>{narration}</p>"
+                    "</section>"
+                ),
+            }
+        ]
+        audio_url = f"{settings.MEDIA_URL}{pmid}/audio.wav" if (output_dir / "audio.wav").exists() else None
+        return render(request, "result.html", {"pmid": pmid, "audio_url": audio_url, "frames": frames, "can_manage": can_manage})
 
     try:
         with open(presentation_path, "r", encoding="utf-8") as f:
@@ -1489,8 +1903,165 @@ def pipeline_result(request, pmid: str):
         "pmid": pmid,
         "audio_url": audio_url,
         "frames": frames,
+        "can_manage": can_manage,
     }
     return render(request, "result.html", context)
+
+
+@login_required
+def review_script(request, pmid: str):
+    """Preview and edit the generated script before audio/presentation generation."""
+    if not _can_manage_paper(request.user, pmid):
+        raise Http404("Generation not found")
+
+    output_dir = Path(settings.MEDIA_ROOT) / pmid
+    script_path = output_dir / "script.json"
+    if not script_path.exists():
+        messages.info(request, "The script is not ready yet. The status page will update when it is available.")
+        return redirect("pipeline_status", pmid=pmid)
+
+    try:
+        scenes = _load_script_scenes(script_path)
+    except Exception as exc:
+        logger.warning(f"Could not load script for review ({pmid}): {exc}")
+        messages.error(request, "The generated script could not be loaded. Please retry this paper.")
+        return redirect("pipeline_status", pmid=pmid)
+
+    if request.method == "POST":
+        source_snippets = _load_source_snippets(output_dir)
+        edited_scenes = []
+        errors = []
+        scene_count = len(scenes)
+        for index in range(scene_count):
+            text = (request.POST.get(f"scene_{index}_text") or "").strip()
+            visual_content = (request.POST.get(f"scene_{index}_visual") or "").strip()
+            source_table = None
+            source_figure = None
+            table_index_raw = (request.POST.get(f"scene_{index}_source_table") or "").strip()
+            if table_index_raw:
+                try:
+                    table_index = int(table_index_raw)
+                    source_table = source_snippets["tables"][table_index]
+                except (ValueError, IndexError):
+                    errors.append(f"Scene {index + 1} selected table is no longer available.")
+            figure_index_raw = (request.POST.get(f"scene_{index}_source_figure") or "").strip()
+            if figure_index_raw:
+                try:
+                    figure_index = int(figure_index_raw)
+                    source_figure = dict(source_snippets["figures"][figure_index])
+                    source_figure["url"] = _source_figure_proxy_url(pmid, figure_index)
+                except (ValueError, IndexError):
+                    errors.append(f"Scene {index + 1} selected image is no longer available.")
+            if not text:
+                errors.append(f"Scene {index + 1} narration cannot be empty.")
+            if not visual_content:
+                errors.append(f"Scene {index + 1} visual description cannot be empty.")
+            if source_table and "source table" not in visual_content.lower():
+                visual_content = (
+                    f"{visual_content}\n\nUse source table {source_table.get('label') or source_table.get('id') or ''}: "
+                    f"{source_table.get('caption') or source_table.get('text') or ''}"
+                ).strip()
+            if source_figure and "source image" not in visual_content.lower():
+                visual_content = (
+                    f"{visual_content}\n\nUse source image {source_figure.get('id') or 'Figure'}: "
+                    f"{source_figure.get('caption') or ''}"
+                ).strip()
+            edited_scenes.append(
+                {
+                    "text": text,
+                    "visual_type": "generated",
+                    "visual_content": visual_content,
+                    "source_table": source_table,
+                    "source_figure": source_figure,
+                }
+            )
+
+        if errors:
+            for error in errors:
+                messages.error(request, error)
+            return render(
+                request,
+                "script_review.html",
+                {
+                    "pmid": pmid,
+                    "scenes": edited_scenes,
+                    "review_ready": True,
+                    "source_snippets": source_snippets,
+                },
+            )
+
+        with open(script_path, "w", encoding="utf-8") as f:
+            json.dump(edited_scenes, f, indent=2, ensure_ascii=False)
+
+        _clear_downstream_artifacts(output_dir)
+
+        try:
+            from web.models import VideoGenerationJob
+
+            VideoGenerationJob.objects.filter(
+                user=request.user,
+                paper_id=pmid,
+                status="pending",
+                current_step="review-script",
+            ).delete()
+        except Exception as exc:
+            logger.warning(f"Could not remove review placeholder job for {pmid}: {exc}")
+
+        _start_pipeline_async(pmid, output_dir, request.user.id, review_required=False)
+        messages.success(request, "Script approved. Generating audio and the final presentation now.")
+        return redirect("pipeline_status", pmid=pmid)
+
+    return render(
+        request,
+        "script_review.html",
+        {
+            "pmid": pmid,
+            "scenes": scenes,
+            "review_ready": True,
+            "source_snippets": _load_source_snippets(output_dir),
+        },
+    )
+
+
+def source_figure_image(request, pmid: str, index: int):
+    """Serve an extracted source figure through the local app."""
+    if not settings.DEBUG and not _can_manage_paper(request.user, pmid):
+        raise Http404("Generation not found")
+
+    output_dir = Path(settings.MEDIA_ROOT) / pmid
+    snippets = _load_source_snippets(output_dir)
+    try:
+        figure = snippets["figures"][index]
+    except IndexError:
+        raise Http404("Source image not found")
+
+    source_url = figure.get("url") or ""
+    if not source_url:
+        raise Http404("Source image not found")
+
+    cache_path = _source_figure_cache_path(output_dir, index, source_url)
+    content_type = mimetypes.guess_type(cache_path.name)[0] or "image/jpeg"
+    if cache_path.exists():
+        return HttpResponse(cache_path.read_bytes(), content_type=content_type)
+
+    request_obj = urllib.request.Request(
+        source_url,
+        headers={
+            "User-Agent": "Mozilla/5.0 Infodemica local source image loader",
+            "Accept": "image/avif,image/webp,image/apng,image/svg+xml,image/*,*/*;q=0.8",
+        },
+    )
+    try:
+        with urllib.request.urlopen(request_obj, timeout=12) as response:
+            image_bytes = response.read()
+            content_type = response.headers.get_content_type() or content_type
+    except Exception as exc:
+        logger.warning(f"Could not fetch source figure {pmid} index {index} from {source_url}: {exc}")
+        raise Http404("Source image could not be loaded")
+
+    cache_path.parent.mkdir(parents=True, exist_ok=True)
+    cache_path.write_bytes(image_bytes)
+    return HttpResponse(image_bytes, content_type=content_type)
 
 
 @login_required
@@ -1554,6 +2125,7 @@ def serve_video(request, pmid: str):
         else:
             # Local development fallback
             output_dir = Path(settings.MEDIA_ROOT) / pmid
+            final_video = output_dir / "final_video.mp4"
             if final_video.exists():
                 return FileResponse(
                     open(final_video, 'rb'),
@@ -1583,16 +2155,38 @@ def my_videos(request):
         videos = []
         for job in jobs:
             try:
+                file_progress = None
+                if job.paper_id:
+                    try:
+                        file_progress = _get_pipeline_progress(Path(settings.MEDIA_ROOT) / job.paper_id)
+                    except Exception as e:
+                        logger.warning(f"Error checking file progress for job {job.id}: {e}")
+
+                display_status = job.status or 'pending'
+                display_progress = job.progress_percent or 0
+                display_current_step = job.current_step
+
+                if file_progress and file_progress.get("status") == "completed":
+                    display_status = "completed"
+                    display_progress = 100
+                    display_current_step = None
+                    if job.status != "completed" or job.progress_percent != 100 or job.current_step:
+                        job.status = "completed"
+                        job.progress_percent = 100
+                        job.current_step = None
+                        job.completed_at = job.completed_at or timezone.now()
+                        job.save(update_fields=["status", "progress_percent", "current_step", "completed_at", "updated_at"])
+
                 video_data = {
                     'job': job,
                     'paper_id': job.paper_id or 'Unknown',
-                    'status': job.status or 'pending',
-                    'progress_percent': job.progress_percent or 0,
-                    'current_step': job.current_step,
+                    'status': display_status,
+                    'progress_percent': display_progress,
+                    'current_step': display_current_step,
                     'created_at': job.created_at,
                     'completed_at': job.completed_at,
-                    'error_message': job.error_message if job.status == 'failed' else None,
-                    'error_type': job.error_type if job.status == 'failed' else None,
+                    'error_message': job.error_message if display_status == 'failed' else None,
+                    'error_type': job.error_type if display_status == 'failed' else None,
                     'video_url': None,
                     'has_video': False,
                 }
@@ -1620,8 +2214,7 @@ def my_videos(request):
                 
                 # Filter out failed jobs that don't have files (likely from wiped volumes)
                 # Only show failed jobs if they have files OR if they're recent (within last 7 days)
-                if job.status == 'failed' and not has_file:
-                    from django.utils import timezone
+                if display_status == 'failed' and not has_file:
                     from datetime import timedelta
                     # Skip failed jobs without files that are older than 7 days
                     if job.created_at and (timezone.now() - job.created_at) > timedelta(days=7):
@@ -1644,16 +2237,73 @@ def my_videos(request):
         })
 
 
+@login_required
+@require_POST
+def retry_generation(request, pmid: str):
+    """Retry a failed generation for the current user."""
+    if not _can_manage_paper(request.user, pmid):
+        raise Http404("Generation not found")
+
+    limit_error = _generation_limit_error(request.user)
+    if limit_error:
+        messages.error(request, limit_error)
+        return redirect("pipeline_status", pmid=pmid)
+
+    output_dir = Path(settings.MEDIA_ROOT) / pmid
+    _start_pipeline_async(pmid, output_dir, request.user.id)
+    messages.success(request, "Retry started. The status page will update automatically.")
+    return redirect("pipeline_status", pmid=pmid)
+
+
+@login_required
+@require_POST
+def delete_generation(request, pmid: str):
+    """Delete the user's generation record and local artifacts for a paper."""
+    if not _can_manage_paper(request.user, pmid):
+        raise Http404("Generation not found")
+
+    from web.models import VideoGenerationJob
+
+    job_filter = VideoGenerationJob.objects.filter(paper_id=pmid)
+    if not request.user.is_staff:
+        job_filter = job_filter.filter(user=request.user)
+    job_filter.delete()
+
+    if not getattr(settings, "USE_CLOUD_STORAGE", False):
+        output_dir = Path(settings.MEDIA_ROOT) / pmid
+        try:
+            shutil.rmtree(output_dir)
+        except FileNotFoundError:
+            pass
+        except OSError as exc:
+            logger.warning(f"Could not delete artifacts for {pmid}: {exc}")
+            messages.warning(request, "The database record was removed, but some local files could not be deleted.")
+            return redirect("my_videos")
+
+    messages.success(request, f"Deleted generation for {pmid}.")
+    return redirect("my_videos")
+
+
+def privacy_policy(request):
+    """Public privacy policy page."""
+    return render(request, "privacy.html")
+
+
+def terms_of_service(request):
+    """Public terms page."""
+    return render(request, "terms.html")
+
+
 def register(request):
     """User registration view."""
     if request.method == "POST":
-        form = UserCreationForm(request.POST)
+        form = EmailRequiredUserCreationForm(request.POST)
         if form.is_valid():
             user = form.save()
             login(request, user)
             return redirect("home")
     else:
-        form = UserCreationForm()
+        form = EmailRequiredUserCreationForm()
     return render(request, "registration/register.html", {"form": form})
 
 
@@ -1697,19 +2347,19 @@ def api_start_generation(request):
                 status=400
             )
         
-        # Validate access code
-        try:
-            if not _validate_access_code(access_code):
+        # Validate access code for private deployments.
+        if getattr(settings, "REQUIRE_VIDEO_ACCESS_CODE", True):
+            try:
+                if not _validate_access_code(access_code):
+                    return JsonResponse(
+                        {"success": False, "error": "Invalid or missing access_code"},
+                        status=403
+                    )
+            except ValueError as e:
                 return JsonResponse(
-                    {"success": False, "error": "Invalid or missing access_code"},
-                    status=403  # Forbidden
+                    {"success": False, "error": f"Server configuration error: {str(e)}"},
+                    status=500
                 )
-        except ValueError as e:
-            # Server misconfiguration - access code not set
-            return JsonResponse(
-                {"success": False, "error": f"Server configuration error: {str(e)}"},
-                status=500  # Internal Server Error
-            )
         
         # Validate API keys are set
         if not os.getenv("GEMINI_API_KEY"):
@@ -1748,6 +2398,12 @@ def api_start_generation(request):
         # Get user ID if authenticated (API may not require auth, so this is optional)
         user_id = None
         if hasattr(request, 'user') and request.user.is_authenticated:
+            limit_error = _generation_limit_error(request.user)
+            if limit_error:
+                return JsonResponse(
+                    {"success": False, "error": limit_error, "limits": _generation_limit_state(request.user)},
+                    status=429
+                )
             user_id = request.user.id
         
         # Start the pipeline
@@ -1783,7 +2439,7 @@ def api_status(request, paper_id: str):
     {
         "paper_id": "PMC10979640",
         "status": "running",  # pending, running, completed, failed
-        "current_step": "generate-videos",
+        "current_step": "build-presentation",
         "completed_steps": ["fetch-paper", "generate-script", "generate-audio"],
         "progress_percent": 60,
         "final_video_url": "/media/PMC10979640/final_video.mp4" or null,
@@ -1858,15 +2514,16 @@ def api_status(request, paper_id: str):
                 except Exception:
                     pass
     except Exception as e:
-        import logging
-        logger = logging.getLogger(__name__)
         logger.warning(f"Error getting progress from database in API: {e}")
     
     # Fallback to file-based progress
     if progress is None:
         progress = _get_pipeline_progress(output_dir)
     
-    final_video_url = None
+    final_video_url = progress.get("final_video_url")
+    presentation_url = None
+    if (output_dir / "presentation.html").exists() or (output_dir / "presentation.json").exists():
+        presentation_url = reverse("pipeline_result", args=[paper_id])
     # Get log tail
     log_path = output_dir / "pipeline.log"
     log_tail = ""
@@ -1886,6 +2543,7 @@ def api_status(request, paper_id: str):
         "progress_percent": progress["progress_percent"],
         "progress_updated_at": progress.get("progress_updated_at"),
         "final_video_url": final_video_url,
+        "presentation_url": presentation_url,
         "log_tail": log_tail,
     }
     
@@ -1921,7 +2579,21 @@ def api_result(request, paper_id: str):
         "status_url": "/api/status/PMC10979640/"
     }
     """
-    # Check if video exists (cloud storage or local)
+    output_dir = Path(settings.MEDIA_ROOT) / paper_id
+    presentation_exists = (output_dir / "presentation.html").exists() or (
+        output_dir / "presentation.json"
+    ).exists()
+    if presentation_exists:
+        return JsonResponse({
+            "paper_id": paper_id,
+            "success": True,
+            "result_url": reverse("pipeline_result", args=[paper_id]),
+            "presentation_url": reverse("pipeline_result", args=[paper_id]),
+            "status": "completed",
+            "progress_percent": 100,
+        })
+
+    # Check if legacy MP4 video exists (cloud storage or local)
     final_video_exists, video_url = _check_video_exists(paper_id, request.user if hasattr(request, 'user') and request.user.is_authenticated else None)
     
     if final_video_exists and video_url:
@@ -1934,7 +2606,6 @@ def api_result(request, paper_id: str):
         })
     else:
         # Get progress for status info
-        output_dir = Path(settings.MEDIA_ROOT) / paper_id
         progress = _get_pipeline_progress(output_dir)
         
         return JsonResponse({

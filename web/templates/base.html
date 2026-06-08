@@ -4,8 +4,8 @@
   <head>
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
-    <title>{% block title %}KyleAI{% endblock %}</title>
-    <link rel="stylesheet" href="{% static 'web/css/style.css' %}">
+    <title>{% block title %}Infodemica{% endblock %}</title>
+    <link rel="stylesheet" href="{% static 'web/css/style.css' %}?v=2026.06.05.3">
   </head>
   <body>
     <!-- DNA Loading Animation -->
@@ -29,7 +29,10 @@
     <header class="site-header">
       <div class="header-container">
         <h1 class="header-logo">
-          <a href="/" class="header-logo-link">KyleAI</a>
+          <a href="/" class="header-logo-link brand-lockup" aria-label="Infodemica home">
+            <img src="{% static 'web/img/infodemica-logo.jpeg' %}" alt="" class="brand-logo" width="44" height="44">
+            <span class="brand-name">Infodemica</span>
+          </a>
         </h1>
         <nav class="header-nav">
           {% if user.is_authenticated %}
@@ -58,6 +61,10 @@
 
         {% block content %}{% endblock %}
       </main>
+      <footer class="site-footer">
+        <a href="{% url 'privacy_policy' %}">Privacy</a>
+        <a href="{% url 'terms_of_service' %}">Terms</a>
+      </footer>
     </div>
 
     <script>
@@ -76,4 +83,3 @@
     </script>
   </body>
 </html>
-

@@ -1,12 +1,12 @@
-# Hidden Hill (KyleAI)
+# Infodemica
 
 **Transform Research Into Visual Stories**
 
-Hidden Hill is a Django web application that automatically converts scientific papers into engaging social media videos (TikTok/Instagram Reels format). The system uses AI (Google Gemini for text/audio generation, RunwayML for video generation) to transform complex research papers from PubMed Central into accessible, shareable video content.
+Infodemica is a Django web application that automatically converts scientific papers into engaging social media videos (TikTok/Instagram Reels format). The system uses AI (Google Gemini for text/audio generation, RunwayML for video generation) to transform complex research papers from PubMed Central into accessible, shareable video content.
 
 ## 🎯 Problem Being Solved
 
-Scientific research is often locked behind paywalls and buried in technical jargon, making it inaccessible to the general public. Hidden Hill democratizes science by:
+Scientific research is often locked behind paywalls and buried in technical jargon, making it inaccessible to the general public. Infodemica democratizes science by:
 
 - **Breaking Down Barriers**: Converting complex research papers into engaging visual stories
 - **Increasing Reach**: Videos get 10x more engagement than static PDFs
@@ -423,4 +423,3 @@ Hidden-Hill/
 
 **Last Updated**: 2025-01-28  
 **Project Status**: Production-ready, core features complete
-

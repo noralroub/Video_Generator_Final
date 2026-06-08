@@ -54,6 +54,11 @@ def _parse_pipeline_progress(line: str, current_progress: dict) -> Optional[dict
             "complete": "complete",
             "percent": 40,
         },
+        "review-script": {
+            "start": "review-script",
+            "complete": "awaiting review",
+            "percent": 40,
+        },
         "generate-frames": {
             "start": "step: generate-frames",
             "complete": "complete",
@@ -140,7 +145,13 @@ def _parse_pipeline_progress(line: str, current_progress: dict) -> Optional[dict
     retry_kwargs={"max_retries": 0},  # Don't auto-retry, but catch all exceptions
     reject_on_worker_lost=False,  # Don't reject task if worker dies
 )
-def generate_video_task(self, pmid: str, output_dir: str, user_id: Optional[int] = None) -> Dict:
+def generate_video_task(
+    self,
+    pmid: str,
+    output_dir: str,
+    user_id: Optional[int] = None,
+    review_required: bool = False,
+) -> Dict:
     """
     Celery task to generate video from a PubMed paper.
     
@@ -152,6 +163,7 @@ def generate_video_task(self, pmid: str, output_dir: str, user_id: Optional[int]
         pmid: PubMed ID or PMC ID of the paper
         output_dir: Directory path where output files will be saved
         user_id: Optional user ID to associate with the job
+        review_required: If True, stop after script generation for user editing.
         
     Returns:
         Dict with status information:
@@ -294,6 +306,8 @@ def generate_video_task(self, pmid: str, output_dir: str, user_id: Optional[int]
             raise FileNotFoundError(f"Pipeline script not found: {script_path}")
         
         cmd = [python_exe, str(script_path), "generate-video", pmid, str(output_path)]
+        if review_required:
+            cmd.extend(["--stop-after", "generate-script"])
         
         logger.info(f"Running command: {' '.join(cmd)}")
         logger.info(f"Working directory: {settings.BASE_DIR}")
@@ -499,7 +513,30 @@ def generate_video_task(self, pmid: str, output_dir: str, user_id: Optional[int]
         frames_file = output_path / "frames.json"
         presentation_file = output_path / "presentation.json"
         
-        if (
+        if review_required and return_code == 0 and script_file.exists():
+            task_result["status"] = "awaiting_review"
+            logger.info(f"Script review required for {pmid}; pausing before audio generation")
+
+            if job:
+                try:
+                    job.refresh_from_db()
+                    job.status = 'pending'
+                    job.progress_percent = 40
+                    job.current_step = 'review-script'
+                    job.error_message = ''
+                    job.error_type = ''
+                    job.save(update_fields=[
+                        'status',
+                        'progress_percent',
+                        'current_step',
+                        'error_message',
+                        'error_type',
+                        'updated_at',
+                    ])
+                except Exception as e:
+                    logger.warning(f"Failed to update job record for script review: {e}")
+
+        elif (
             return_code == 0
             and script_file.exists()
             and audio_file.exists()
@@ -983,4 +1020,3 @@ def test_r2_storage_write_task(self) -> Dict:
             "use_cloud_storage": getattr(settings, 'USE_CLOUD_STORAGE', False),
             "storage_backend": type(default_storage).__name__ if 'default_storage' in locals() else "unknown",
         }
-

@@ -3,6 +3,7 @@ Fetch paper content from PubMed Central (PMC).
 """
 
 import json
+import re
 import urllib.request
 import xml.etree.ElementTree as ET
 from pathlib import Path
@@ -14,6 +15,19 @@ class PMCNotFoundError(Exception):
     """Raised when a paper is not available in PubMed Central."""
 
     pass
+
+
+def _pmc_image_viewer_url(pmcid: str, image_name: str) -> str:
+    """Return NCBI's stable image viewer URL for a PMC article asset."""
+    match = re.search(r"PMC(\d+)", pmcid, re.IGNORECASE)
+    if not match:
+        return ""
+    numeric_id = match.group(1)
+    pmc_bucket = f"PMC{numeric_id[0]}"
+    return (
+        "https://www.ncbi.nlm.nih.gov/core/lw/2.0/html/tileshop_pmc/"
+        f"tileshop_pmc_inline.html?title=Click%20on%20image%20to%20zoom&p={pmc_bucket}&id={numeric_id}_{image_name}"
+    )
 
 
 def fetch_paper(paper_id: str, output_dir: str) -> Dict:
@@ -67,7 +81,7 @@ def get_pmcid(pmid: str) -> Optional[str]:
     Returns:
         PMCID string (e.g., "PMC8675309") or None if not in PMC
     """
-    url = f"https://eutils.ncbi.nlm.nih.gov/entrez/eutils/efetch.fcgi?db=pubmed&id={pmid}&retmode=xml"
+    url = f"https://www.ncbi.nlm.nih.gov/entrez/eutils/efetch.fcgi?db=pubmed&id={pmid}&retmode=xml"
 
     with urllib.request.urlopen(url) as response:
         xml_data = response.read()
@@ -99,7 +113,7 @@ def download_pmc_xml(pmcid: str, output_dir: str) -> str:
     """
     # Strip "PMC" prefix if present for the API call
     pmc_number = pmcid.replace("PMC", "")
-    url = f"https://eutils.ncbi.nlm.nih.gov/entrez/eutils/efetch.fcgi?db=pmc&id={pmc_number}&retmode=xml"
+    url = f"https://www.ncbi.nlm.nih.gov/entrez/eutils/efetch.fcgi?db=pmc&id={pmc_number}&retmode=xml"
 
     output_path = Path(output_dir)
     output_path.mkdir(parents=True, exist_ok=True)
@@ -157,6 +171,7 @@ def parse_pmc_xml(xml_path: str, pmid: Optional[str], pmcid: str) -> Dict:
     # Parse the XML to get figures (pubmed_parser doesn't have a direct figure parser)
     root = ET.parse(xml_path).getroot()
     figures = []
+    tables = []
 
     # Search for fig elements (namespace-agnostic)
     for fig in root.iter():
@@ -182,10 +197,61 @@ def parse_pmc_xml(xml_path: str, pmid: Optional[str], pmcid: str) -> Dict:
                     if xlink_href:
                         # Construct full URL to PMC image
                         url = f"https://www.ncbi.nlm.nih.gov/pmc/articles/{pmcid}/bin/{xlink_href}"
+                        source_url = _pmc_image_viewer_url(pmcid, xlink_href) or url
                         figures.append(
-                            {"id": fig_id, "url": url, "caption": caption.strip()}
+                            {
+                                "id": fig_id,
+                                "url": url,
+                                "source_url": source_url,
+                                "caption": caption.strip(),
+                            }
                         )
                         break  # Only take first graphic per figure
+
+    for table_wrap in root.iter():
+        if not (table_wrap.tag.endswith("}table-wrap") or table_wrap.tag == "table-wrap"):
+            continue
+
+        table_id = table_wrap.get("id", "")
+        label = ""
+        caption = ""
+        table_text = ""
+
+        for elem in table_wrap:
+            if elem.tag.endswith("}label") or elem.tag == "label":
+                label = "".join(elem.itertext()).strip()
+                break
+
+        for elem in table_wrap.iter():
+            if elem.tag.endswith("}caption") or elem.tag == "caption":
+                caption = " ".join("".join(elem.itertext()).split())
+                break
+
+        rows = []
+        for row in table_wrap.iter():
+            if not (row.tag.endswith("}tr") or row.tag == "tr"):
+                continue
+            cells = []
+            for cell in row:
+                if cell.tag.endswith("}td") or cell.tag == "td" or cell.tag.endswith("}th") or cell.tag == "th":
+                    text = " ".join("".join(cell.itertext()).split())
+                    if text:
+                        cells.append(text)
+            if cells:
+                rows.append(" | ".join(cells))
+
+        if rows:
+            table_text = "\n".join(rows[:12])
+
+        if caption or table_text:
+            tables.append(
+                {
+                    "id": table_id,
+                    "label": label or table_id or f"Table {len(tables) + 1}",
+                    "caption": caption,
+                    "text": table_text,
+                }
+            )
 
     return {
         "pmid": pmid,
@@ -193,4 +259,5 @@ def parse_pmc_xml(xml_path: str, pmid: Optional[str], pmcid: str) -> Dict:
         "title": title.strip(),
         "full_text": full_text.strip(),
         "figures": figures,
+        "tables": tables,
     }

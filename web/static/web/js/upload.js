@@ -2,9 +2,9 @@
 
 document.addEventListener('DOMContentLoaded', function() {
     // Elements
-    const form = document.querySelector('form');
-    const submitBtn = document.querySelector('.btn-primary');
-    const textInputs = document.querySelectorAll('input[type="text"]');
+    const form = document.getElementById('paper-upload-form');
+    const submitBtn = form ? form.querySelector('button[type="submit"]') : null;
+    const textInputs = form ? form.querySelectorAll('input[type="text"]') : [];
 
     // Form validation
     if (form) {

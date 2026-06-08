@@ -1,4 +1,34 @@
 from django import forms
+from django.contrib.auth.forms import UserCreationForm
+from django.contrib.auth.models import User
+
+
+class EmailRequiredUserCreationForm(UserCreationForm):
+    """Registration form that requires a unique email address."""
+
+    email = forms.EmailField(
+        required=True,
+        label="Email address",
+        help_text="Required. Used for password reset emails.",
+        widget=forms.EmailInput(attrs={"autocomplete": "email"}),
+    )
+
+    class Meta(UserCreationForm.Meta):
+        model = User
+        fields = ("username", "email", "password1", "password2")
+
+    def clean_email(self):
+        email = self.cleaned_data["email"].strip().lower()
+        if User.objects.filter(email__iexact=email).exists():
+            raise forms.ValidationError("An account with this email already exists.")
+        return email
+
+    def save(self, commit=True):
+        user = super().save(commit=False)
+        user.email = self.cleaned_data["email"]
+        if commit:
+            user.save()
+        return user
 
 
 class PaperUploadForm(forms.Form):
@@ -29,3 +59,9 @@ class PaperUploadForm(forms.Form):
             "onkeydown": "this.removeAttribute('readonly')",
         }),
     )
+
+    def __init__(self, *args, require_access_code=True, **kwargs):
+        super().__init__(*args, **kwargs)
+        if not require_access_code:
+            self.fields["access_code"].required = False
+            self.fields["access_code"].help_text = "Not required for this deployment."

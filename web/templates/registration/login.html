@@ -1,6 +1,6 @@
 {% extends "base.html" %}
 
-{% block title %}Login - KyleAI{% endblock %}
+{% block title %}Login - Infodemica{% endblock %}
 
 {% block content %}
   <h1>Login</h1>
@@ -37,6 +37,8 @@
     <input type="hidden" name="next" value="{{ next }}">
   </form>
 
-  <p style="margin-top: 20px;"><a href="{% url 'register' %}">Don't have an account? Register here</a></p>
+  <p style="margin-top: 20px;">
+    <a href="{% url 'password_reset' %}">Forgot your password?</a>
+  </p>
+  <p><a href="{% url 'register' %}">Don't have an account? Register here</a></p>
 {% endblock %}
-

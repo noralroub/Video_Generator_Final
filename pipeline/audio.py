@@ -6,7 +6,6 @@ import os
 import threading
 import time
 import wave
-from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass, asdict
 from pathlib import Path
 from typing import List
@@ -188,6 +187,26 @@ def _save_wav(audio_data: bytes, output_path: Path) -> None:
     logger.info(f"Saved audio to {output_path}")
 
 
+def _estimate_scene_weights(scene_texts: List[str]) -> List[float]:
+    """Estimate narration timing weights without extra TTS calls.
+
+    This keeps the single natural full-audio track as the source of truth and
+    allocates scene boundaries based on text complexity. It avoids one TTS API
+    call per scene, which is important for Gemini TTS free-tier quotas.
+    """
+    weights = []
+    for text in scene_texts:
+        words = text.split()
+        word_weight = len(words)
+        comma_pauses = text.count(",") * 0.35
+        sentence_pauses = sum(text.count(mark) for mark in ".!?") * 0.75
+        long_word_weight = sum(0.15 for word in words if len(word) > 9)
+        weights.append(
+            max(1.0, word_weight + comma_pauses + sentence_pauses + long_word_weight)
+        )
+    return weights
+
+
 def generate_audio(
     scenes: List[Scene],
     output_dir: Path,
@@ -197,11 +216,10 @@ def generate_audio(
     """
     Generate audio narration for scenes with boundary timing.
 
-    This function implements the proportional splitting approach:
+    This function implements a quota-efficient proportional splitting approach:
     1. Generate full continuous TTS (natural flow - this is the keeper)
-    2. Generate each scene individually in parallel (for timing proportions)
-    3. Calculate proportional boundaries from individual durations
-    4. Apply proportions to split full audio at scene boundaries
+    2. Estimate each scene's timing weight from narration text
+    3. Apply proportions to split full audio at scene boundaries
 
     Args:
         scenes: List of Scene objects to narrate
@@ -240,32 +258,11 @@ def generate_audio(
     full_duration = _calculate_duration(full_audio_data)
     logger.info(f"Full audio duration: {full_duration:.2f}s")
 
-    # Step 2: Generate individual scene audio in parallel (for proportions only)
-    logger.info("Generating individual scene audio for timing proportions...")
-    individual_durations = [0.0] * len(scenes)
-
-    def generate_scene_audio(index: int, text: str) -> tuple[int, float]:
-        """Generate audio for a single scene and return its duration."""
-        audio_data = _generate_tts(client, text, voice)
-        duration = _calculate_duration(audio_data)
-        logger.info(f'Scene {index}: {duration:.2f}s - "{text[:50]}..."')
-        return index, duration
-
-    # Use ThreadPoolExecutor for parallel TTS generation
-    with ThreadPoolExecutor(max_workers=10) as executor:
-        futures = {
-            executor.submit(generate_scene_audio, i, text): i
-            for i, text in enumerate(scene_texts)
-        }
-
-        for future in as_completed(futures):
-            index, duration = future.result()
-            individual_durations[index] = duration
-
-    # Step 3: Calculate proportional boundaries
-    logger.info("Calculating proportional scene boundaries...")
-    total_individual_duration = sum(individual_durations)
-    proportions = [d / total_individual_duration for d in individual_durations]
+    # Step 2: Estimate scene timing proportions without extra TTS calls.
+    logger.info("Estimating scene boundaries from narration text (single TTS call mode)")
+    timing_weights = _estimate_scene_weights(scene_texts)
+    total_weight = sum(timing_weights)
+    proportions = [weight / total_weight for weight in timing_weights]
 
     # Create boundaries: [0, prop1*full_dur, (prop1+prop2)*full_dur, ..., full_dur]
     boundaries = [0.0]
@@ -277,7 +274,7 @@ def generate_audio(
     # Ensure last boundary is exactly full_duration (avoid floating point errors)
     boundaries[-1] = full_duration
 
-    # Step 4: Create SceneAudio objects with boundary info
+    # Step 3: Create SceneAudio objects with boundary info
     scene_boundaries = []
     for i, scene in enumerate(scenes):
         duration = boundaries[i + 1] - boundaries[i]
@@ -297,7 +294,7 @@ def generate_audio(
             f"({scene_audio.duration:.2f}s) - {scene.visual_type}"
         )
 
-    # Step 5: Save full audio as WAV
+    # Step 4: Save full audio as WAV
     audio_path = output_dir / "audio.wav"
     _save_wav(full_audio_data, audio_path)
 

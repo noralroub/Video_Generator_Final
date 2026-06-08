@@ -1,5 +1,5 @@
 """
-Celery configuration for Hidden Hill video generation tasks.
+Celery configuration for Infodemica video generation tasks.
 
 This module sets up Celery for asynchronous task processing.
 Tasks are stored in Redis (or RabbitMQ) broker and survive server restarts.

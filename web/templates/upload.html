@@ -4,8 +4,8 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Upload Paper - KyleAI</title>
-    <link rel="stylesheet" href="{% static 'web/css/upload.css' %}?v=2024.11.26">
+    <title>Upload Paper - Infodemica</title>
+    <link rel="stylesheet" href="{% static 'web/css/upload.css' %}?v=2026.06.05.3">
 </head>
 <body>
     <!-- Background Orbs -->
@@ -36,7 +36,10 @@
     <header class="site-header">
         <div class="header-container">
             <h1 class="header-logo">
-                <a href="/" class="header-logo-link">KyleAI</a>
+                <a href="/" class="header-logo-link brand-lockup" aria-label="Infodemica home">
+                    <img src="{% static 'web/img/infodemica-logo.jpeg' %}" alt="" class="brand-logo" width="44" height="44">
+                    <span class="brand-name">Infodemica</span>
+                </a>
             </h1>
             <nav class="header-nav">
                 {% if user.is_authenticated %}
@@ -75,7 +78,7 @@
                 {% endif %}
 
                 <!-- Form -->
-                <form method="post" autocomplete="off" data-form-type="other">
+                <form id="paper-upload-form" method="post" autocomplete="off" data-form-type="other">
                     {% csrf_token %}
                     
                     <!-- Hidden dummy fields to trick password managers -->
@@ -130,9 +133,19 @@
                     </div>
                 </form>
 
+                {% if generation_limits %}
+                <div style="margin-top: 18px; padding: 16px 18px; background: rgba(17, 17, 17, 0.04); border-radius: 10px; border: 1px solid #e8e8e8;">
+                    <p style="color: #111111; font-size: 14px; line-height: 1.6; margin: 0;">
+                        Daily usage: <strong>{{ generation_limits.daily_used }}</strong> of
+                        <strong>{{ generation_limits.daily_limit }}</strong> generations used.
+                        You have <strong>{{ generation_limits.daily_remaining }}</strong> left today.
+                    </p>
+                </div>
+                {% endif %}
+
                 <!-- Info Box -->
-                <div style="margin-top: 40px; padding: 20px; background: rgba(232, 240, 247, 0.5); border-radius: 12px; border-left: 4px solid #4a7ba7;">
-                    <p style="color: #1e3a5f; font-size: 14px; line-height: 1.6; margin: 0;">
+                <div style="margin-top: 40px; padding: 20px; background: rgba(245, 245, 245, 0.5); border-radius: 12px; border-left: 4px solid #666666;">
+                    <p style="color: #111111; font-size: 14px; line-height: 1.6; margin: 0;">
                         <strong>💡 Tip:</strong> Enter a PubMed ID (e.g., 12345678) or PMCID (e.g., PMC10979640) to automatically fetch the paper and generate an AI powered video of your research.
                     </p>
                 </div>
@@ -146,7 +159,7 @@
         // Aggressively prevent password manager autofill on upload form
         document.addEventListener('DOMContentLoaded', function() {
             // Get all input fields in the upload form
-            const form = document.querySelector('form[method="post"]');
+            const form = document.getElementById('paper-upload-form');
             if (form) {
                 const inputs = form.querySelectorAll('input[type="text"], input[type="password"]');
                 

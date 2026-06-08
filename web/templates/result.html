@@ -1,11 +1,22 @@
 {% extends "base.html" %}
 
-{% block title %}Result - {{ pmid }} - KyleAI{% endblock %}
+{% block title %}Result - {{ pmid }} - Infodemica{% endblock %}
 
 {% block content %}
   <h1>Presentation Result</h1>
   <p>Your AI-generated narrated presentation for paper <strong>{{ pmid }}</strong> is ready.</p>
 
+  {% if presentation_html_url %}
+  <section class="html-video-section">
+    <iframe
+      class="html-video-frame"
+      srcdoc="{{ presentation_html_doc|escape }}"
+      title="HTML video presentation for {{ pmid }}"
+      allow="autoplay"
+    ></iframe>
+    <p class="frames-hint">This HTML video was generated as a self-contained presentation and synced to narration audio.</p>
+  </section>
+  {% else %}
   {% if audio_url %}
   <section class="player-section">
     <h2>Narration</h2>
@@ -37,10 +48,17 @@
       {% endfor %}
     </div>
   </section>
+  {% endif %}
 
   <div class="button-group">
     <a href="/upload/" class="btn-primary">Generate another presentation</a>
     <a href="/my-videos/" class="btn-secondary">My Videos</a>
+    {% if can_manage %}
+    <form method="post" action="{% url 'delete_generation' pmid %}" class="inline-form" onsubmit="return confirm('Delete this generation and its local files?');">
+      {% csrf_token %}
+      <button type="submit" class="btn-danger">Delete</button>
+    </form>
+    {% endif %}
   </div>
 
   <style>
@@ -50,8 +68,23 @@
       margin-bottom: 1.5rem;
     }
 
+    .html-video-section {
+      margin: 1.5rem auto;
+      max-width: 520px;
+    }
+
+    .html-video-frame {
+      width: 100%;
+      aspect-ratio: 9 / 16;
+      min-height: 620px;
+      border: 0;
+      border-radius: 0.75rem;
+      background: #020617;
+      box-shadow: 0 18px 40px rgba(15, 23, 42, 0.35);
+    }
+
     .frames-hint {
-      color: #6b7280;
+      color: #666666;
       margin-bottom: 0.75rem;
       font-size: 0.9rem;
     }
@@ -105,6 +138,9 @@
       }
       .frame-item {
         box-shadow: 0 12px 30px rgba(15, 23, 42, 0.55);
+      }
+      .html-video-frame {
+        min-height: 560px;
       }
     }
   </style>

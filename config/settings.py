@@ -79,6 +79,10 @@ if not DEBUG and SECRET_KEY == "dev-secret-not-for-production":
 # REQUIRED: Must be set for security. If not set, video generation will fail with error.
 # Generate a strong code: python -c "import secrets; print(secrets.token_urlsafe(32))"
 VIDEO_ACCESS_CODE = os.getenv("VIDEO_ACCESS_CODE", None)
+REQUIRE_VIDEO_ACCESS_CODE = os.getenv("REQUIRE_VIDEO_ACCESS_CODE", "True") == "True"
+GENERATION_DAILY_LIMIT = int(os.getenv("GENERATION_DAILY_LIMIT", "5"))
+GENERATION_CONCURRENT_LIMIT = int(os.getenv("GENERATION_CONCURRENT_LIMIT", "1"))
+SCRIPT_REVIEW_REQUIRED = os.getenv("SCRIPT_REVIEW_REQUIRED", "True") == "True"
 
 # Simulation Mode
 # When enabled, video generation tasks will simulate progress instead of running the actual pipeline
@@ -192,6 +196,20 @@ LOGIN_URL = "/login/"
 LOGIN_REDIRECT_URL = "/"
 LOGOUT_REDIRECT_URL = "/"
 
+# Email settings for password reset. Local development prints reset links to
+# the runserver terminal; production can provide SMTP_* environment variables.
+EMAIL_BACKEND = os.getenv(
+    "EMAIL_BACKEND",
+    "django.core.mail.backends.console.EmailBackend" if DEBUG else "django.core.mail.backends.smtp.EmailBackend",
+)
+DEFAULT_FROM_EMAIL = os.getenv("DEFAULT_FROM_EMAIL", "Infodemica <no-reply@infodemica.local>")
+EMAIL_HOST = os.getenv("SMTP_HOST", "localhost")
+EMAIL_PORT = int(os.getenv("SMTP_PORT", "587"))
+EMAIL_HOST_USER = os.getenv("SMTP_USER", "")
+EMAIL_HOST_PASSWORD = os.getenv("SMTP_PASSWORD", "")
+EMAIL_USE_TLS = os.getenv("SMTP_USE_TLS", "True") == "True"
+EMAIL_USE_SSL = os.getenv("SMTP_USE_SSL", "False") == "True"
+
 # Password validation
 AUTH_PASSWORD_VALIDATORS = [
     {
@@ -243,6 +261,8 @@ CELERY_TASK_TIME_LIMIT = 30 * 60  # 30 minutes hard limit
 CELERY_TASK_SOFT_TIME_LIMIT = 25 * 60  # 25 minutes soft limit (raises exception)
 CELERY_WORKER_SEND_TASK_EVENTS = True
 CELERY_TASK_SEND_SENT_EVENT = True
+CELERY_TASK_ALWAYS_EAGER = os.getenv("CELERY_TASK_ALWAYS_EAGER", "False") == "True"
+CELERY_TASK_EAGER_PROPAGATES = os.getenv("CELERY_TASK_EAGER_PROPAGATES", "True") == "True"
 
 # Celery worker pool (use 'solo' for Windows, 'prefork' for Linux)
 # Windows doesn't support prefork pool properly, so use solo pool

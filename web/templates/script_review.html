@@ -1,0 +1,130 @@
+{% extends "base.html" %}
+
+{% block title %}Review Script - {{ pmid }} - Infodemica{% endblock %}
+
+{% block content %}
+  <h1>Review Script</h1>
+  <p>Paper <strong>{{ pmid }}</strong> has an AI-generated draft. Edit the narration and visual notes before audio and the final presentation are created.</p>
+
+  {% if source_snippets.figures or source_snippets.tables or source_snippets.pdfs %}
+  <section class="source-snippets">
+    <div class="source-snippets-header">
+      <h2>Source snippets</h2>
+      <p>Use these when a scene should show a real table, figure, or paper excerpt instead of an abstract visual.</p>
+    </div>
+
+    {% if source_snippets.tables %}
+      <h3>Tables</h3>
+      <div class="source-snippet-grid">
+        {% for table in source_snippets.tables %}
+          <article class="source-snippet">
+            <strong>{{ table.label|default:table.id|default:"Table" }}</strong>
+            {% if table.caption %}<p>{{ table.caption|truncatewords:45 }}</p>{% endif %}
+            {% if table.text %}<pre>{{ table.text|truncatechars:700 }}</pre>{% endif %}
+          </article>
+        {% endfor %}
+      </div>
+    {% endif %}
+
+    {% if source_snippets.figures %}
+      <h3>Figures</h3>
+      <div class="source-snippet-grid">
+        {% for figure in source_snippets.figures %}
+          <article class="source-snippet">
+            <strong>{{ figure.id|default:"Figure" }}</strong>
+            {% url 'source_figure_image' pmid forloop.counter0 as source_image_url %}
+            {% if figure.url %}<img src="{{ source_image_url }}" alt="{{ figure.id|default:'Source figure' }}" class="source-snippet-image" loading="lazy">{% endif %}
+            {% if figure.caption %}<p>{{ figure.caption|truncatewords:45 }}</p>{% endif %}
+            {% if figure.url %}<a href="{{ source_image_url }}">Open source image</a>{% endif %}
+          </article>
+        {% endfor %}
+      </div>
+    {% endif %}
+
+    {% if source_snippets.pdfs %}
+      <h3>Local PDFs</h3>
+      <div class="source-snippet-grid">
+        {% for pdf in source_snippets.pdfs %}
+          <article class="source-snippet">
+            <strong>{{ pdf.name }}</strong>
+            <p>PDF found in this paper folder. Screenshot extraction can use this file when a PDF parser is available.</p>
+            <a href="{{ pdf.url }}" target="_blank" rel="noopener">Open PDF</a>
+          </article>
+        {% endfor %}
+      </div>
+    {% endif %}
+  </section>
+  {% endif %}
+
+  <form method="post" class="script-review-form">
+    {% csrf_token %}
+    <div class="script-scenes">
+      {% for scene in scenes %}
+        <section class="script-scene">
+          <div class="script-scene-header">
+            <h2>Scene {{ forloop.counter }}</h2>
+          </div>
+
+          <label for="scene_{{ forloop.counter0 }}_text">Narration</label>
+          <textarea
+            id="scene_{{ forloop.counter0 }}_text"
+            name="scene_{{ forloop.counter0 }}_text"
+            rows="4"
+            required
+          >{{ scene.text }}</textarea>
+
+          <label for="scene_{{ forloop.counter0 }}_visual">Visual notes for the HTML/video scene</label>
+          <textarea
+            id="scene_{{ forloop.counter0 }}_visual"
+            name="scene_{{ forloop.counter0 }}_visual"
+            rows="5"
+            required
+          >{{ scene.visual_content }}</textarea>
+
+          {% if source_snippets.tables %}
+          <label for="scene_{{ forloop.counter0 }}_source_table">Use source table in this scene</label>
+          <select
+            id="scene_{{ forloop.counter0 }}_source_table"
+            name="scene_{{ forloop.counter0 }}_source_table"
+            class="script-source-select"
+          >
+            <option value="">No table selected</option>
+            {% for table in source_snippets.tables %}
+              <option
+                value="{{ forloop.counter0 }}"
+                {% if scene.source_table and scene.source_table.label == table.label %}selected{% endif %}
+              >
+                {{ table.label|default:table.id|default:"Table" }}{% if table.caption %} - {{ table.caption|truncatechars:90 }}{% endif %}
+              </option>
+            {% endfor %}
+          </select>
+          {% endif %}
+
+          {% if source_snippets.figures %}
+          <label for="scene_{{ forloop.counter0 }}_source_figure">Use source image in this scene</label>
+          <select
+            id="scene_{{ forloop.counter0 }}_source_figure"
+            name="scene_{{ forloop.counter0 }}_source_figure"
+            class="script-source-select"
+          >
+            <option value="">No image selected</option>
+            {% for figure in source_snippets.figures %}
+              <option
+                value="{{ forloop.counter0 }}"
+                {% if scene.source_figure and scene.source_figure.id == figure.id %}selected{% endif %}
+              >
+                {{ figure.id|default:"Figure" }}{% if figure.caption %} - {{ figure.caption|truncatechars:90 }}{% endif %}
+              </option>
+            {% endfor %}
+          </select>
+          {% endif %}
+        </section>
+      {% endfor %}
+    </div>
+
+    <div class="button-group">
+      <button type="submit" class="btn-primary">Approve and Generate Audio</button>
+      <a href="{% url 'pipeline_status' pmid %}" class="btn-secondary">Back to Status</a>
+    </div>
+  </form>
+{% endblock %}

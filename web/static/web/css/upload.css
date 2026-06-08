@@ -1,19 +1,19 @@
 /* Upload Page Styles */
 
 :root {
-    --primary-blue: #1e3a5f;
-    --primary-blue-light: #2d5a8c;
-    --primary-blue-lighter: #e8f0f7;
-    --secondary-blue: #4a90e2;
-    --accent-blue: #6db3f2;
-    --light-blue: #e8f0f7;
+    --primary-blue: #111111;
+    --primary-blue-light: #2b2b2b;
+    --primary-blue-lighter: #f4f4f4;
+    --secondary-blue: #555555;
+    --accent-blue: #777777;
+    --light-blue: #f4f4f4;
     --white: #ffffff;
     --text-dark: #1a1a1a;
     --text-light: #666666;
     --success: #10b981;
     --error: #ef4444;
-    --shadow: 0 10px 30px rgba(30, 58, 95, 0.1);
-    --shadow-hover: 0 15px 40px rgba(30, 58, 95, 0.15);
+    --shadow: 0 10px 30px rgba(0, 0, 0, 0.1);
+    --shadow-hover: 0 15px 40px rgba(0, 0, 0, 0.15);
 }
 
 * {
@@ -31,7 +31,7 @@ html {
 }
 
 body {
-    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
+    font-family: "Inter", "SF Pro Display", "Aptos", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
     min-height: 100vh;
     color: var(--text-dark);
     margin: 0;
@@ -63,7 +63,7 @@ body {
     width: 100%;
     height: 100%;
     z-index: -2;
-    background: linear-gradient(135deg, #0f1419 0%, #1e3a5f 40%, #2d5a8c 70%, #e8f0f7 100%);
+    background: linear-gradient(135deg, #050505 0%, #111111 40%, #2b2b2b 70%, #f4f4f4 100%);
     background-attachment: fixed;
     overflow: hidden;
 }
@@ -88,7 +88,7 @@ body {
 .orb-2 {
     width: 500px;
     height: 500px;
-    background: #4a7ba7;
+    background: #666666;
     bottom: -250px;
     right: -250px;
     animation-delay: 5s;
@@ -119,10 +119,10 @@ body {
     left: 0 !important;
     right: 0 !important;
     width: 100% !important;
-    background: #1e3a5f !important;
+    background: #111111 !important;
     color: #ffffff !important;
     z-index: 1000 !important;
-    box-shadow: 0 2px 12px rgba(30, 58, 95, 0.15) !important;
+    box-shadow: 0 2px 12px rgba(0, 0, 0, 0.15) !important;
     border-bottom: 2px solid rgba(255, 255, 255, 0.1) !important;
     margin: 0 !important;
     padding: 0 !important;
@@ -151,7 +151,7 @@ body {
     z-index: 1 !important;
     letter-spacing: -0.5px !important;
     color: #ffffff !important;
-    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Helvetica Neue', sans-serif !important;
+    font-family: "Inter", "SF Pro Display", "Aptos", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif !important;
     line-height: 1 !important;
 }
 
@@ -160,7 +160,8 @@ body {
     color: #ffffff !important;
     text-decoration: none !important;
     transition: all 0.3s ease !important;
-    display: inline-block !important;
+    display: inline-flex !important;
+    align-items: center !important;
     font-weight: 800 !important;
 }
 
@@ -168,6 +169,25 @@ body {
 .header-logo-link:hover {
     opacity: 0.9 !important;
     transform: translateY(-1px) !important;
+}
+
+.brand-lockup {
+    display: inline-flex !important;
+    align-items: center !important;
+    gap: 12px !important;
+}
+
+.brand-logo {
+    width: 38px;
+    height: 38px;
+    border-radius: 9px;
+    object-fit: cover;
+    flex: 0 0 auto;
+    background: #000000;
+}
+
+.brand-name {
+    line-height: 1;
 }
 
 .site-header .header-nav,
@@ -343,8 +363,8 @@ main {
 .form-group input[type="file"]:focus {
     outline: none;
     border-color: var(--accent-blue);
-    box-shadow: 0 0 0 4px rgba(74, 123, 167, 0.15);
-    background: rgba(232, 240, 247, 0.3);
+    box-shadow: 0 0 0 4px rgba(0, 0, 0, 0.15);
+    background: rgba(245, 245, 245, 0.3);
     transform: translateY(-2px);
 }
 
@@ -365,7 +385,7 @@ main {
 
 .form-group input[type="file"]::file-selector-button:hover {
     transform: translateY(-3px);
-    box-shadow: 0 8px 25px rgba(30, 58, 95, 0.4);
+    box-shadow: 0 8px 25px rgba(0, 0, 0, 0.4);
 }
 
 .help-text {
@@ -464,16 +484,16 @@ main {
 }
 
 .btn-secondary {
-    background: linear-gradient(135deg, var(--light-blue) 0%, #d1e5f7 100%);
+    background: linear-gradient(135deg, var(--light-blue) 0%, #e5e5e5 100%);
     color: var(--primary-blue);
     border: 2px solid var(--accent-blue);
-    box-shadow: 0 5px 20px rgba(74, 123, 167, 0.2);
+    box-shadow: 0 5px 20px rgba(0, 0, 0, 0.2);
 }
 
 .btn-secondary:hover {
-    background: linear-gradient(135deg, #c9dce8 0%, #b8cfe4 100%);
+    background: linear-gradient(135deg, #eeeeee 0%, #dedede 100%);
     transform: translateY(-5px);
-    box-shadow: 0 10px 35px rgba(74, 123, 167, 0.4);
+    box-shadow: 0 10px 35px rgba(0, 0, 0, 0.4);
 }
 
 .btn-secondary:active {
@@ -506,7 +526,7 @@ main {
 }
 
 .alert-info {
-    background: linear-gradient(135deg, rgba(74, 123, 167, 0.1), rgba(30, 58, 95, 0.1));
+    background: linear-gradient(135deg, rgba(0, 0, 0, 0.1), rgba(0, 0, 0, 0.1));
     border-left: 4px solid var(--accent-blue);
     color: var(--primary-blue);
     font-weight: 500;
@@ -686,7 +706,7 @@ main {
     left: 0;
     width: 100%;
     height: 100%;
-    background: rgba(30, 58, 95, 0.9);
+    background: rgba(0, 0, 0, 0.9);
     display: flex;
     align-items: center;
     justify-content: center;

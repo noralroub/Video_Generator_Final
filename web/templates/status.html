@@ -1,6 +1,6 @@
 {% extends "base.html" %}
 
-{% block title %}Pipeline Status - {{ pmid }} - KyleAI{% endblock %}
+{% block title %}Pipeline Status - {{ pmid }} - Infodemica{% endblock %}
 
 {% block content %}
   <h1>Pipeline Status</h1>
@@ -12,7 +12,15 @@
       <div class="alert alert-success">
         <p><strong>Presentation ready!</strong></p>
         <div class="button-group">
-          <a href="/result/{{ pmid }}" class="btn-primary">Open result page</a>
+          <a href="/result/{{ pmid }}/" class="btn-primary">Open result page</a>
+        </div>
+      </div>
+    {% elif progress.status == "awaiting_review" %}
+      <div class="alert alert-info">
+        <p><strong>Script ready for review</strong></p>
+        <p>Edit the narration and visual notes before audio and the final presentation are generated.</p>
+        <div class="button-group">
+          <a href="{{ review_url }}" class="btn-primary">Review script</a>
         </div>
       </div>
     {% elif progress.status == "failed" %}
@@ -27,10 +35,16 @@
         {% else %}
           <p>An error occurred during video generation. Please check the log below for details.</p>
         {% endif %}
+        {% if can_retry %}
+        <form method="post" action="{% url 'retry_generation' pmid %}" class="inline-form">
+          {% csrf_token %}
+          <button type="submit" class="btn-primary">Retry this paper</button>
+        </form>
+        {% endif %}
       </div>
     {% else %}
       <div class="alert alert-info">
-        <p>Pipeline is running. Status will update automatically...</p>
+        <p>Pipeline is running. Status will update automatically. You can close this tab; generation continues in your account.</p>
       </div>
     {% endif %}
   </div>
@@ -41,7 +55,7 @@
     <h2>📄 Presentation Ready!</h2>
     <p>Your narrated HTML presentation has been generated. Open the result page to view frames and audio.</p>
     <div class="button-group">
-      <a href="/result/{{ pmid }}" class="btn-primary">Open Result Page</a>
+      <a href="/result/{{ pmid }}/" class="btn-primary">Open Result Page</a>
     </div>
   </div>
   {% endif %}
@@ -62,7 +76,7 @@
     
     <div id="current-step-container">
       {% if progress.current_step %}
-        <p><strong>Current step:</strong> <span id="current-step-text">{{ progress.current_step }}</span></p>
+        <p><strong>Current step:</strong> <span id="current-step-text">{{ current_step_label }}</span></p>
       {% else %}
         <p id="current-step-text" style="display: none;"><strong>Current step:</strong> <span></span></p>
       {% endif %}
@@ -72,7 +86,7 @@
       {% if progress.completed_steps %}
         <p><strong>Completed steps:</strong></p>
         <ul id="completed-steps-list">
-          {% for step in progress.completed_steps %}
+          {% for step in completed_step_labels %}
             <li>✓ {{ step }}</li>
           {% endfor %}
         </ul>
@@ -84,12 +98,21 @@
 
   <div class="button-group">
     <a href="/upload/" class="btn-primary">Generate another presentation</a>
+    {% if review_url %}
+      <a href="{{ review_url }}" class="btn-secondary">Review script</a>
+    {% endif %}
     <a href="?_json=1" class="btn-secondary" target="_blank">View JSON status</a>
+    {% if can_manage %}
+      <form method="post" action="{% url 'delete_generation' pmid %}" class="inline-form" onsubmit="return confirm('Delete this generation and its local files?');">
+        {% csrf_token %}
+        <button type="submit" class="btn-danger">Delete</button>
+      </form>
+    {% endif %}
   </div>
 
   <script>
     // Auto-refresh status page
-    const pmid = "{{ pmid }}";
+    const pmid = "{{ pmid|escapejs }}";
     let refreshInterval = null;
     let isCompleted = {% if progress.status|default:"" == "completed" %}true{% else %}false{% endif %};
     let isFailed = {% if progress.status|default:"" == "failed" %}true{% else %}false{% endif %};
@@ -147,7 +170,7 @@
             if (data.current_step) {
               currentStepText.style.display = 'block';
               const span = currentStepText.querySelector('span');
-              if (span) span.textContent = data.current_step;
+              if (span) span.textContent = data.current_step_label || data.current_step;
             } else {
               currentStepText.style.display = 'none';
             }
@@ -157,7 +180,8 @@
           const completedStepsList = document.getElementById('completed-steps-list');
           if (completedStepsList && data.completed_steps) {
             completedStepsList.innerHTML = '';
-            data.completed_steps.forEach(step => {
+            const stepLabels = data.completed_step_labels || data.completed_steps;
+            stepLabels.forEach(step => {
               const li = document.createElement('li');
               li.textContent = '✓ ' + step;
               completedStepsList.appendChild(li);
@@ -171,11 +195,25 @@
           const statusContainer = document.getElementById('status-alert-container');
           if (statusContainer) {
             if (data.status === 'completed') {
+              const resultUrl = `/result/${encodeURIComponent(pmid)}/`;
               statusContainer.innerHTML = `
                 <div class="alert alert-success">
                   <p><strong>Presentation ready!</strong></p>
                   <div class="button-group">
-                    <a href="/result/${pmid}" class="btn-primary">Open result page</a>
+                    <a href="${resultUrl}" class="btn-primary">Open result page</a>
+                  </div>
+                </div>
+              `;
+              isCompleted = true;
+              stopPolling();
+            } else if (data.status === 'awaiting_review') {
+              const reviewUrl = data.review_url || `/review/${encodeURIComponent(pmid)}/`;
+              statusContainer.innerHTML = `
+                <div class="alert alert-info">
+                  <p><strong>Script ready for review</strong></p>
+                  <p>Edit the narration and visual notes before audio and the final presentation are generated.</p>
+                  <div class="button-group">
+                    <a href="${reviewUrl}" class="btn-primary">Review script</a>
                   </div>
                 </div>
               `;
@@ -183,18 +221,21 @@
               stopPolling();
             } else if (data.status === 'failed') {
               const errorMsg = data.error_message || data.error || 'An error occurred during video generation.';
-              statusContainer.innerHTML = `
-                <div class="alert alert-error">
-                  <p><strong>❌ Video generation failed</strong></p>
-                  <p>${errorMsg}</p>
-                </div>
-              `;
+              const alert = document.createElement('div');
+              alert.className = 'alert alert-error';
+              const title = document.createElement('p');
+              title.innerHTML = '<strong>❌ Video generation failed</strong>';
+              const message = document.createElement('p');
+              message.textContent = errorMsg;
+              alert.appendChild(title);
+              alert.appendChild(message);
+              statusContainer.replaceChildren(alert);
               isFailed = true;
               stopPolling();
             } else if (data.status === 'running' || data.status === 'pending') {
               statusContainer.innerHTML = `
                 <div class="alert alert-info">
-                  <p>Pipeline is running. Status will update automatically...</p>
+                  <p>Pipeline is running. Status will update automatically. You can close this tab; generation continues in your account.</p>
                 </div>
               `;
             }

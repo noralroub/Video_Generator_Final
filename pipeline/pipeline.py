@@ -2,6 +2,7 @@
 
 import json
 import logging
+import os
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Callable, Optional
@@ -11,6 +12,7 @@ from frames import (
     build_presentation,
     generate_frames_artifacts,
 )
+from presentation import render_presentation_claude
 from pubmed import fetch_paper
 from scenes import generate_scenes, save_scenes, load_scenes
 
@@ -36,7 +38,14 @@ class PipelineError(Exception):
 def check_paper_fetched(output_dir: Path) -> bool:
     """Check if paper has been fetched."""
     paper_json = output_dir / "paper.json"
-    return paper_json.exists()
+    if not paper_json.exists():
+        return False
+    try:
+        with open(paper_json, "r", encoding="utf-8") as f:
+            paper_data = json.load(f)
+        return bool(paper_data.get("title") and paper_data.get("full_text"))
+    except (OSError, json.JSONDecodeError):
+        return False
 
 
 
@@ -44,7 +53,13 @@ def check_paper_fetched(output_dir: Path) -> bool:
 def check_script_generated(output_dir: Path) -> bool:
     """Check if script has been generated."""
     script_json = output_dir / "script.json"
-    return script_json.exists()
+    if not script_json.exists():
+        return False
+    try:
+        return len(load_scenes(script_json)) > 0
+    except Exception as e:
+        logger.warning("Existing script.json is invalid, regenerating: %s", e)
+        return False
 
 
 def check_audio_generated(output_dir: Path) -> bool:
@@ -233,5 +248,15 @@ def _generate_frames_step(output_dir: Path) -> None:
 
 def _build_presentation_step(output_dir: Path) -> None:
     """Execute the build-presentation step."""
+    if os.getenv("PRESENTATION_PROVIDER", "").lower() == "claude":
+        render_presentation_claude(
+            script_path=output_dir / "script.json",
+            output_path=output_dir / "presentation.html",
+            audio_metadata_path=output_dir / "audio_metadata.json",
+            audio_src="audio.wav",
+            paper_path=output_dir / "paper.json",
+        )
+        logger.info("Generated Claude HTML presentation")
+
     build_presentation(output_dir)
     logger.info("Built presentation.json from frames and audio metadata")

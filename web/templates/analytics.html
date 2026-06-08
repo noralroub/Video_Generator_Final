@@ -1,11 +1,14 @@
 {% extends "base.html" %}
 {% load static %}
 
-{% block title %}Analytics - Hidden Hill{% endblock %}
+{% block title %}Analytics - Infodemica{% endblock %}
 
 {% block content %}
 <div class="analytics-container" style="max-width: 800px; margin: 2rem auto; padding: 2rem;">
-    <h1 style="text-align: center; margin-bottom: 2rem; color: #333;">Hidden Hill Team</h1>
+    <h1 class="brand-heading" style="text-align: center; margin-bottom: 2rem; color: #333;">
+        <img src="{% static 'web/img/infodemica-logo.jpeg' %}" alt="" class="brand-heading-logo" width="64" height="64">
+        <span>Infodemica Team</span>
+    </h1>
     
     <div class="team-nicknames-section" style="background: #f8f9fa; padding: 2rem; border-radius: 8px; margin-bottom: 2rem;">
         <h2 style="margin-top: 0; color: #555;">Team Member Nicknames</h2>
@@ -79,4 +82,3 @@
     </script>
 </div>
 {% endblock %}
-

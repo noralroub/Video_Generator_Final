@@ -1,0 +1,29 @@
+{% extends "base.html" %}
+{% load static %}
+
+{% block title %}Privacy Policy - Infodemica{% endblock %}
+
+{% block content %}
+  <section class="legal-page">
+    <h1>Privacy Policy</h1>
+    <p>Last updated: June 5, 2026</p>
+
+    <h2>
+      What <span class="brand-inline"><img src="{% static 'web/img/infodemica-logo.jpeg' %}" alt="" class="brand-inline-logo" width="22" height="22">Infodemica</span> Processes
+    </h2>
+    <p><span class="brand-inline"><img src="{% static 'web/img/infodemica-logo.jpeg' %}" alt="" class="brand-inline-logo" width="22" height="22">Infodemica</span> turns public biomedical papers into narrated visual summaries. To do that, the app stores your account details, the paper IDs you submit, generation status, and generated files such as scripts, audio, HTML presentations, and logs.</p>
+
+    <h2>AI Providers</h2>
+    <p>Submitted paper content and generated prompts may be sent to configured AI providers, including Anthropic and Google Gemini, so the app can create narration, visuals, and audio.</p>
+
+    <h2>Your Controls</h2>
+    <ul>
+      <li>You can delete generated outputs from your account on the status, result, or My Videos pages.</li>
+      <li>You can reset your password from the login page if your account has an email address.</li>
+      <li>Do not submit private patient information or unpublished confidential material.</li>
+    </ul>
+
+    <h2>Contact</h2>
+    <p>For privacy questions, contact the <span class="brand-inline"><img src="{% static 'web/img/infodemica-logo.jpeg' %}" alt="" class="brand-inline-logo" width="22" height="22">Infodemica</span> administrator for this deployment.</p>
+  </section>
+{% endblock %}
