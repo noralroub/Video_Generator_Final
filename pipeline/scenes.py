@@ -26,6 +26,7 @@ class Scene:
     visual_content: str
     source_table: dict[str, Any] | None = None
     source_figure: dict[str, Any] | None = None
+    source_video: dict[str, Any] | None = None
 
 
 def generate_scenes(paper_data: dict, api_key: str | None = None) -> List[Scene]:
@@ -255,6 +256,7 @@ Return ONLY a JSON object with this structure:
                         visual_content=scene_data["visual_content"],
                         source_table=scene_data.get("source_table"),
                         source_figure=scene_data.get("source_figure"),
+                        source_video=scene_data.get("source_video"),
                     )
                 )
 
@@ -342,6 +344,7 @@ def load_scenes(input_path: Path) -> List[Scene]:
                 visual_content=scene_data.get("visual_content", ""),
                 source_table=scene_data.get("source_table"),
                 source_figure=scene_data.get("source_figure"),
+                source_video=scene_data.get("source_video"),
             )
             for scene_data in scenes_data
         ]

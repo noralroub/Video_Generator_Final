@@ -51,6 +51,10 @@
   {% endif %}
 
   <div class="button-group">
+    {% if can_manage %}
+    <a href="{% url 'edit_frames' pmid %}" class="btn-primary">Edit Frames</a>
+    <a href="{% url 'export_mp4' pmid %}" class="btn-secondary">Download MP4</a>
+    {% endif %}
     <a href="/upload/" class="btn-primary">Generate another presentation</a>
     <a href="/my-videos/" class="btn-secondary">My Videos</a>
     {% if can_manage %}

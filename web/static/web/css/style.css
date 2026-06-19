@@ -1143,3 +1143,228 @@ video {
         width: 100%;
     }
 }
+
+.frame-edit-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+    gap: 14px;
+}
+
+.frame-delete {
+    display: inline-flex !important;
+    align-items: center;
+    gap: 8px;
+    margin: 0 !important;
+    font-weight: 700;
+    color: var(--text-light) !important;
+}
+
+.frame-delete input {
+    width: 18px;
+    height: 18px;
+}
+
+
+.frame-workbench {
+    display: grid;
+    grid-template-columns: 220px minmax(360px, 420px) minmax(320px, 1fr);
+    gap: 22px;
+    align-items: start;
+    margin-top: 28px;
+}
+
+.slide-sorter,
+.frame-stage-panel,
+.frame-fields-panel {
+    position: sticky;
+    top: 92px;
+}
+
+.slide-sorter {
+    display: grid;
+    gap: 10px;
+    max-height: calc(100vh - 120px);
+    overflow: auto;
+}
+
+.slide-thumb {
+    display: grid;
+    grid-template-columns: 28px 1fr;
+    gap: 8px;
+    width: 100%;
+    min-height: 86px;
+    padding: 10px;
+    border: 1px solid var(--gray-medium);
+    border-radius: 8px;
+    background: #ffffff;
+    color: var(--text-dark);
+    text-align: left;
+    cursor: grab;
+    box-shadow: var(--shadow-sm);
+}
+
+.slide-thumb.active {
+    border-color: #111111;
+    box-shadow: 0 0 0 3px rgba(0,0,0,.08);
+}
+
+.slide-thumb-number {
+    display: grid;
+    place-items: center;
+    width: 28px;
+    height: 28px;
+    border-radius: 999px;
+    background: #111111;
+    color: #ffffff;
+    font-size: 12px;
+    font-weight: 800;
+}
+
+.slide-thumb-title {
+    font-weight: 800;
+    line-height: 1.2;
+}
+
+.slide-thumb-layout {
+    grid-column: 2;
+    color: var(--text-light);
+    font-size: 12px;
+    text-transform: capitalize;
+}
+
+.frame-live-preview {
+    width: 360px;
+    height: 640px;
+    max-width: 100%;
+    border-radius: 12px;
+    background: #050505;
+    color: #ffffff;
+    overflow: hidden;
+    box-shadow: var(--shadow-lg);
+}
+
+.preview-light {
+    background: #f8fafc;
+    color: #111827;
+}
+
+.preview-journal_brand {
+    background: radial-gradient(circle at 80% 12%, #334155, #050505 60%);
+}
+
+.preview-badge {
+    align-self: flex-start;
+    padding: 5px 10px;
+    border-radius: 999px;
+    border: 1px solid currentColor;
+    font-size: 10px;
+    letter-spacing: .1em;
+    text-transform: uppercase;
+    opacity: .75;
+}
+
+.frame-live-preview h2 {
+    margin: 0;
+    font-size: 28px;
+    line-height: 1.04;
+    letter-spacing: 0;
+}
+
+.frame-live-preview p,
+.frame-live-preview li,
+.preview-visual {
+    font-size: 13px;
+    line-height: 1.35;
+    opacity: .82;
+}
+
+.frame-live-preview ul {
+    margin: 0;
+    padding-left: 18px;
+}
+
+.preview-visual {
+    margin-top: auto;
+    padding-left: 10px;
+    border-left: 3px solid currentColor;
+}
+
+.frame-live-preview footer {
+    display: flex;
+    justify-content: space-between;
+    gap: 12px;
+    font-size: 10px;
+    opacity: .7;
+}
+
+.frame-workbench-actions {
+    margin-top: 16px;
+}
+
+.frame-field-card {
+    display: none;
+    border: 1px solid var(--gray-medium);
+    border-radius: 12px;
+    padding: 22px;
+    background: #ffffff;
+    box-shadow: var(--shadow-sm);
+}
+
+.frame-field-card.active {
+    display: block;
+}
+
+.custom-source-form {
+    display: grid;
+    gap: 14px;
+}
+
+.custom-source-form textarea {
+    width: 100%;
+    min-height: 120px;
+    resize: vertical;
+    padding: 14px 16px;
+    border: 1px solid var(--gray-medium);
+    border-radius: 10px;
+    font: inherit;
+    background: #ffffff;
+}
+
+@media (max-width: 1180px) {
+    .frame-workbench {
+        grid-template-columns: 1fr;
+    }
+    .slide-sorter,
+    .frame-stage-panel,
+    .frame-fields-panel {
+        position: static;
+    }
+    .slide-sorter {
+        grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+        max-height: none;
+    }
+}
+
+
+.slide-html-editor {
+    width: 100%;
+    min-height: 300px;
+    resize: vertical;
+    padding: 14px 16px;
+    border: 1px solid var(--gray-medium);
+    border-radius: 10px;
+    font: 12px/1.45 ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace;
+    color: #111111;
+    background: #f7f7f7;
+}
+
+.slide-html-editor:focus {
+    outline: none;
+    border-color: #111111;
+    box-shadow: 0 0 0 3px rgba(0,0,0,.08);
+    background: #ffffff;
+}
+
+iframe.frame-live-preview {
+    border: 0;
+}

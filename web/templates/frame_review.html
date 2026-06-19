@@ -1,0 +1,206 @@
+{% extends "base.html" %}
+
+{% block title %}Edit Frames - {{ pmid }} - Infodemica{% endblock %}
+
+{% block content %}
+  <h1>Edit Frames</h1>
+  <p>Select a frame to edit its content. Drag thumbnails to reorder; visual notes guide generation but do not appear in the video.</p>
+
+  <form method="post" class="frame-workbench" data-frame-workbench>
+    {% csrf_token %}
+    <input type="hidden" name="frame_count" value="{{ frames|length }}">
+
+    <aside class="slide-sorter" aria-label="Frame order">
+      {% for frame in frames %}
+        <button type="button" class="slide-thumb {% if forloop.first %}active{% endif %}" draggable="true" data-frame-tab="{{ forloop.counter0 }}">
+          <span class="slide-thumb-number">{{ forloop.counter }}</span>
+          <span class="slide-thumb-title">{{ frame.headline|truncatechars:56 }}</span>
+        </button>
+      {% endfor %}
+    </aside>
+
+    <section class="frame-stage-panel">
+      <iframe class="frame-live-preview" data-live-preview title="Selected frame preview"></iframe>
+      <div class="button-group frame-workbench-actions">
+        <button type="submit" class="btn-primary">Save Frames and Regenerate Audio</button>
+        <a href="{% url 'pipeline_result' pmid %}" class="btn-secondary">Back to Result</a>
+      </div>
+    </section>
+
+    <section class="frame-fields-panel">
+      {% for frame in frames %}
+        <article class="frame-field-card {% if forloop.first %}active{% endif %}" data-frame-card="{{ forloop.counter0 }}">
+          <div class="script-scene-header">
+            <h2>Frame {{ forloop.counter }}</h2>
+            <label class="frame-delete"><input type="checkbox" name="frame_{{ forloop.counter0 }}_delete"> Delete</label>
+          </div>
+
+          <input type="hidden" data-order-input name="frame_{{ forloop.counter0 }}_order" value="{{ frame.order }}">
+          <textarea class="saved-frame-html" hidden data-saved-frame-html>{{ frame.slide_html }}</textarea>
+
+          <input type="hidden" name="frame_{{ forloop.counter0 }}_layout" value="{{ frame.layout }}">
+          <input type="hidden" name="frame_{{ forloop.counter0 }}_headline" value="{{ frame.headline }}" data-preview-field="headline">
+          <input type="hidden" name="frame_{{ forloop.counter0 }}_accent_text" value="{{ frame.accent_text }}" data-preview-field="accent_text">
+          <input type="hidden" name="frame_{{ forloop.counter0 }}_theme" value="{{ frame.theme|default:'dark' }}" data-preview-field="theme">
+
+          <label for="frame_{{ forloop.counter0 }}_narration">Narration</label>
+          <textarea id="frame_{{ forloop.counter0 }}_narration" name="frame_{{ forloop.counter0 }}_narration" rows="4" required>{{ frame.narration }}</textarea>
+
+          <label for="frame_{{ forloop.counter0 }}_body">Supporting text</label>
+          <textarea id="frame_{{ forloop.counter0 }}_body" name="frame_{{ forloop.counter0 }}_body" rows="3" data-preview-field="body">{{ frame.body }}</textarea>
+
+          <input type="hidden" name="frame_{{ forloop.counter0 }}_key_points" value="{{ frame.key_points_text }}" data-preview-field="key_points">
+
+          <label for="frame_{{ forloop.counter0 }}_visual_prompt">Visual Notes</label>
+          <textarea id="frame_{{ forloop.counter0 }}_visual_prompt" name="frame_{{ forloop.counter0 }}_visual_prompt" rows="4" data-preview-field="visual_prompt">{{ frame.visual_prompt }}</textarea>
+
+          {% if source_snippets.tables %}
+          <label for="frame_{{ forloop.counter0 }}_source_table">Use source table</label>
+          <select id="frame_{{ forloop.counter0 }}_source_table" name="frame_{{ forloop.counter0 }}_source_table" class="script-source-select">
+            <option value="">No table selected</option>
+            {% for table in source_snippets.tables %}
+              <option value="{{ forloop.counter0 }}" {% if frame.evidence_table and frame.evidence_table.label == table.label %}selected{% endif %}>{{ table.label|default:table.id|default:"Table" }}{% if table.caption %} - {{ table.caption|truncatechars:90 }}{% endif %}</option>
+            {% endfor %}
+          </select>
+          {% endif %}
+
+          {% if source_snippets.figures %}
+          <label for="frame_{{ forloop.counter0 }}_source_figure">Use source image</label>
+          <select id="frame_{{ forloop.counter0 }}_source_figure" name="frame_{{ forloop.counter0 }}_source_figure" class="script-source-select">
+            <option value="">No image selected</option>
+            {% for figure in source_snippets.figures %}
+              <option value="{{ forloop.counter0 }}" {% if frame.evidence_figure and frame.evidence_figure.id == figure.id %}selected{% endif %}>{{ figure.id|default:"Figure" }}{% if figure.caption %} - {{ figure.caption|truncatechars:90 }}{% endif %}</option>
+            {% endfor %}
+          </select>
+          {% endif %}
+
+          {% if source_snippets.videos %}
+          <label for="frame_{{ forloop.counter0 }}_source_video">Use source video</label>
+          <select id="frame_{{ forloop.counter0 }}_source_video" name="frame_{{ forloop.counter0 }}_source_video" class="script-source-select">
+            <option value="">No video selected</option>
+            {% for video in source_snippets.videos %}
+              <option value="{{ forloop.counter0 }}" {% if frame.evidence_video and frame.evidence_video.id == video.id %}selected{% endif %}>{{ video.label|default:video.name|default:"Video" }}</option>
+            {% endfor %}
+          </select>
+          {% endif %}
+        </article>
+      {% endfor %}
+    </section>
+  </form>
+
+  <script>
+  (function () {
+    var root = document.querySelector('[data-frame-workbench]');
+    if (!root) return;
+    var thumbs = Array.prototype.slice.call(root.querySelectorAll('[data-frame-tab]'));
+    var cards = Array.prototype.slice.call(root.querySelectorAll('[data-frame-card]'));
+    var preview = root.querySelector('[data-live-preview]');
+    var active = 0;
+
+    function field(card, name) {
+      return card.querySelector('[data-preview-field="' + name + '"]');
+    }
+    function value(card, name) {
+      var el = field(card, name);
+      return el ? el.value : '';
+    }
+    function escapeHtml(text) {
+      return String(text || '').replace(/[&<>"']/g, function (char) {
+        return {'&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'}[char];
+      });
+    }
+    function looksLikeVisualInstruction(text, visualPrompt) {
+      var compact = String(text || '').replace(/\s+/g, ' ').trim();
+      var prompt = String(visualPrompt || '').replace(/\s+/g, ' ').trim();
+      if (!compact) return false;
+      if (prompt && compact === prompt) return true;
+      var lower = compact.toLowerCase();
+      var starts = ['abstract representation', 'abstract visual', 'animated abstract', 'render ', 'show ', 'use ', 'create ', 'visualize '];
+      var terms = ['visualization', 'glowing', 'swirling', 'soft colors', 'data points', 'network', 'nodes', 'overlaid', 'animation'];
+      return starts.some(function (start) { return lower.indexOf(start) === 0; }) && terms.some(function (term) { return lower.indexOf(term) !== -1; });
+    }
+    function keyPointMarkup(text, visualPrompt) {
+      return String(text || '').split(/\n+/).map(function (line) { return line.trim(); }).filter(function (line) {
+        return line && !looksLikeVisualInstruction(line, visualPrompt);
+      }).map(function (line) {
+        return '<li>' + escapeHtml(line) + '</li>';
+      }).join('');
+    }
+    function generatedVisualMarkup(visualPrompt) {
+      var lower = String(visualPrompt || '').toLowerCase();
+      if (!lower.trim()) return '';
+      if (['smile', 'smiling', 'face', 'happy'].some(function (term) { return lower.indexOf(term) !== -1; })) {
+        return '<div class="generated-visual visual-face" aria-hidden="true"><div class="face"><span class="eye eye-left"></span><span class="eye eye-right"></span><span class="smile"></span></div></div>';
+      }
+      if (['network', 'node', 'connection', 'connected', 'social'].some(function (term) { return lower.indexOf(term) !== -1; })) {
+        return '<div class="generated-visual visual-network" aria-hidden="true"><span class="node node-1"></span><span class="node node-2"></span><span class="node node-3"></span><span class="node node-4"></span><span class="node node-5"></span><span class="node node-6"></span><span class="link link-1"></span><span class="link link-2"></span><span class="link link-3"></span><span class="link link-4"></span><span class="link link-5"></span></div>';
+      }
+      if (['chart', 'graph', 'bar', 'data', 'trend'].some(function (term) { return lower.indexOf(term) !== -1; })) {
+        return '<div class="generated-visual visual-chart" aria-hidden="true"><span class="bar bar-1"></span><span class="bar bar-2"></span><span class="bar bar-3"></span><span class="bar bar-4"></span><span class="bar bar-5"></span></div>';
+      }
+      return '<div class="generated-visual visual-abstract" aria-hidden="true"><span class="orb orb-a"></span><span class="orb orb-b"></span><span class="orb orb-c"></span><span class="path"></span></div>';
+    }
+    function previewHtml(card) {
+      var theme = value(card, 'theme') || 'dark';
+      var headline = value(card, 'headline') || 'Untitled frame';
+      var visualPrompt = value(card, 'visual_prompt');
+      var body = value(card, 'body');
+      if (looksLikeVisualInstruction(body, visualPrompt)) body = '';
+      var points = keyPointMarkup(value(card, 'key_points'), visualPrompt);
+      var accent = value(card, 'accent_text') || 'Infodemica';
+      return '<!doctype html><html><head><meta charset="utf-8"><style>' +
+        '*{box-sizing:border-box}body{margin:0;background:#020617;display:flex;align-items:center;justify-content:center;min-height:100vh;font-family:Inter,system-ui,sans-serif}.frame{width:360px;height:640px;padding:26px 22px 24px;overflow:hidden;position:relative;color:#f8fafc;background:radial-gradient(circle at 20% 10%,#1f2937 0,#020617 55%)}.frame.light{color:#111827;background:linear-gradient(160deg,#fff,#eef2ff 70%)}.frame.journal_brand{background:radial-gradient(circle at 80% 15%,#334155 0,#050505 58%)}.frame:before{content:"";position:absolute;inset:0;background-image:linear-gradient(rgba(255,255,255,.055) 1px,transparent 1px),linear-gradient(90deg,rgba(255,255,255,.055) 1px,transparent 1px);background-size:34px 34px;mask-image:linear-gradient(to bottom,black,transparent 74%)}.content{position:relative;z-index:1;min-height:100%;display:flex;flex-direction:column;gap:14px}.badge{align-self:flex-start;padding:5px 10px;border-radius:999px;border:1px solid rgba(255,255,255,.2);background:rgba(255,255,255,.08);font-size:10px;text-transform:uppercase;letter-spacing:.12em}.headline{font-size:29px;line-height:1.03;font-weight:820;margin:0}.body{font-size:15px;line-height:1.42;color:rgba(248,250,252,.82)}.light .body{color:rgba(17,24,39,.78)}ul{margin:0;padding-left:18px;display:grid;gap:7px;font-size:13px;line-height:1.32}ul:empty{display:none}.generated-visual{position:relative;min-height:150px;border-radius:8px;overflow:hidden;border:1px solid rgba(255,255,255,.16);background:linear-gradient(135deg,rgba(255,255,255,.12),rgba(255,255,255,.03))}.visual-face{display:grid;place-items:center}.face{position:relative;width:94px;height:94px;border-radius:999px;background:radial-gradient(circle at 34% 28%,#fff7ed,#fde68a 58%,#f59e0b);box-shadow:0 0 34px rgba(245,158,11,.45)}.eye{position:absolute;top:31px;width:11px;height:15px;border-radius:999px;background:#111827}.eye-left{left:29px}.eye-right{right:29px}.smile{position:absolute;left:27px;right:27px;bottom:28px;height:18px;border-bottom:5px solid #111827;border-radius:0 0 999px 999px}.visual-network .node{position:absolute;width:14px;height:14px;border-radius:999px;background:#fff}.node-1{left:16%;top:22%}.node-2{left:48%;top:15%}.node-3{right:18%;top:35%}.node-4{left:26%;bottom:24%}.node-5{right:28%;bottom:18%}.node-6{left:52%;top:52%}.visual-network .link{position:absolute;height:2px;background:rgba(255,255,255,.45);transform-origin:left center}.link-1{left:19%;top:28%;width:34%;transform:rotate(-12deg)}.link-2{left:52%;top:24%;width:31%;transform:rotate(28deg)}.link-3{left:30%;bottom:32%;width:29%;transform:rotate(-28deg)}.link-4{left:55%;top:57%;width:25%;transform:rotate(30deg)}.link-5{left:29%;top:63%;width:42%;transform:rotate(4deg)}.visual-chart{display:flex;align-items:flex-end;justify-content:center;gap:9px;padding:26px 20px}.visual-chart .bar{width:28px;border-radius:8px 8px 0 0;background:linear-gradient(to top,#38bdf8,#f8fafc)}.bar-1{height:42px}.bar-2{height:74px}.bar-3{height:56px}.bar-4{height:102px}.bar-5{height:86px}.visual-abstract .orb{position:absolute;border-radius:999px;background:rgba(255,255,255,.8)}.orb-a{width:76px;height:76px;left:24px;top:24px}.orb-b{width:54px;height:54px;right:34px;top:48px}.orb-c{width:64px;height:64px;left:44%;bottom:26px}.path{position:absolute;left:28px;right:28px;bottom:46px;height:58px;border-bottom:5px solid rgba(255,255,255,.62);border-radius:0 0 60% 40%;transform:rotate(-7deg)}.footer{margin-top:auto;display:flex;justify-content:space-between;font-size:10px;opacity:.66}' +
+        '</style></head><body><section class="frame ' + escapeHtml(theme) + '"><div class="content"><div class="badge">Preview</div><h1 class="headline">' + escapeHtml(headline) + '</h1><div class="body">' + escapeHtml(body) + '</div>' + generatedVisualMarkup(visualPrompt) + '<ul>' + points + '</ul><div class="footer"><span>Infodemica</span><span>' + escapeHtml(accent) + '</span></div></div></section></body></html>';
+    }
+    function savedFrameHtml(card) {
+      var saved = card && card.querySelector('[data-saved-frame-html]');
+      return saved ? saved.value : '';
+    }
+    function renderPreview() {
+      var card = cards[active];
+      if (!card || !preview) return;
+      preview.srcdoc = savedFrameHtml(card) || previewHtml(card);
+      var title = thumbs[active] && thumbs[active].querySelector('.slide-thumb-title');
+      var headline = card.querySelector('[name$="_headline"]');
+      if (title && headline) title.textContent = headline.value.slice(0, 56) || 'Untitled frame';
+    }
+    function select(index) {
+      active = index;
+      thumbs.forEach(function (thumb, i) { thumb.classList.toggle('active', Number(thumb.getAttribute('data-frame-tab')) === index); });
+      cards.forEach(function (card, i) { card.classList.toggle('active', i === index); });
+      renderPreview();
+    }
+    function syncOrder() {
+      thumbs = Array.prototype.slice.call(root.querySelectorAll('[data-frame-tab]'));
+      thumbs.forEach(function (thumb, i) {
+        var idx = Number(thumb.getAttribute('data-frame-tab'));
+        var orderInput = cards[idx] && cards[idx].querySelector('[data-order-input]');
+        if (orderInput) orderInput.value = i;
+        var number = thumb.querySelector('.slide-thumb-number');
+        if (number) number.textContent = i + 1;
+      });
+    }
+    thumbs.forEach(function (thumb) {
+      thumb.addEventListener('click', function () { select(Number(thumb.getAttribute('data-frame-tab'))); });
+      thumb.addEventListener('dragstart', function (event) { event.dataTransfer.setData('text/plain', thumb.getAttribute('data-frame-tab')); });
+      thumb.addEventListener('dragover', function (event) { event.preventDefault(); });
+      thumb.addEventListener('drop', function (event) {
+        event.preventDefault();
+        var from = event.dataTransfer.getData('text/plain');
+        var dragged = root.querySelector('[data-frame-tab="' + from + '"]');
+        if (dragged && dragged !== thumb) thumb.parentNode.insertBefore(dragged, thumb);
+        syncOrder();
+      });
+    });
+    cards.forEach(function (card) {
+      card.addEventListener('input', function () {
+        var title = thumbs[active] && thumbs[active].querySelector('.slide-thumb-title');
+        var headline = card.querySelector('[name$="_headline"]');
+        if (title && headline) title.textContent = headline.value.slice(0, 56) || 'Untitled frame';
+      });
+    });
+    syncOrder();
+    select(0);
+  }());
+  </script>
+{% endblock %}

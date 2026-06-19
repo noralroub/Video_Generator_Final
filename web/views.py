@@ -18,7 +18,7 @@ logger = logging.getLogger(__name__)
 from django.contrib import messages
 from django.contrib.auth import login
 from django.contrib.auth.decorators import login_required, user_passes_test
-from django.http import JsonResponse, HttpResponse, HttpResponseRedirect, HttpResponseBadRequest, Http404
+from django.http import JsonResponse, HttpResponse, HttpResponseRedirect, HttpResponseBadRequest, Http404, FileResponse
 from django.shortcuts import render, redirect
 from django.urls import reverse
 from django.views.decorators.http import require_http_methods, require_POST
@@ -209,6 +209,109 @@ def _source_figure_cache_path(output_dir: Path, index: int, source_url: str) -> 
     return output_dir / "source_figures" / f"figure_{index}{suffix}"
 
 
+
+
+def _pipeline_module(name: str):
+    """Import a module from the local pipeline directory for web-side edits/export."""
+    import importlib
+    import sys
+
+    pipeline_dir = str(settings.BASE_DIR / "pipeline")
+    if pipeline_dir not in sys.path:
+        sys.path.insert(0, pipeline_dir)
+    module = importlib.import_module(name)
+    if settings.DEBUG:
+        module = importlib.reload(module)
+    return module
+
+
+def _clear_after_frame_edits(output_dir: Path) -> None:
+    """Remove artifacts that depend on edited frame order/text, but keep frames.json."""
+    for name in ["audio.wav", "audio_metadata.json", "presentation.json", "presentation.html", "presentation.mp4"]:
+        try:
+            (output_dir / name).unlink()
+        except FileNotFoundError:
+            pass
+    mp4_dir = output_dir / "mp4_export"
+    if mp4_dir.exists():
+        shutil.rmtree(mp4_dir)
+
+
+def _ensure_frame_artifacts(output_dir: Path) -> list[dict]:
+    frames_path = output_dir / "frames.json"
+    frames_module = _pipeline_module("frames")
+    if not frames_path.exists():
+        frames_module.generate_frames_artifacts(output_dir)
+    frames = [frames_module.frame_to_dict(frame) for frame in frames_module.load_frames(frames_path)]
+    return sorted(frames, key=lambda item: item.get("order", 0))
+
+
+def _frame_render_signature(frame: dict) -> dict:
+    return {
+        "layout": frame.get("layout"),
+        "headline": frame.get("headline"),
+        "body": frame.get("body"),
+        "key_points": frame.get("key_points") or [],
+        "visual_prompt": frame.get("visual_prompt"),
+        "evidence_table": frame.get("evidence_table"),
+        "evidence_figure": frame.get("evidence_figure"),
+        "evidence_video": frame.get("evidence_video"),
+        "theme": frame.get("theme"),
+        "accent_text": frame.get("accent_text"),
+    }
+
+
+def _save_frame_artifacts(output_dir: Path, frame_dicts: list[dict], previous_frames: list[dict] | None = None) -> None:
+    frames_module = _pipeline_module("frames")
+    frame_objects = [frames_module._frame_from_dict(item, idx) for idx, item in enumerate(frame_dicts)]
+    frames_module.save_frames(frame_objects, output_dir / "frames.json")
+    frames_dir = output_dir / "frames"
+    frames_dir.mkdir(parents=True, exist_ok=True)
+    metadata_path = output_dir / "frame_render_metadata.json"
+    try:
+        with open(metadata_path, "r", encoding="utf-8") as f:
+            metadata = json.load(f)
+    except (OSError, json.JSONDecodeError):
+        metadata = {"renderer": os.getenv("FRAME_RENDERER", "claude").lower(), "frames": []}
+    records = {int(record.get("scene_id", idx)): record for idx, record in enumerate(metadata.get("frames") or [])}
+    previous_by_scene = {int(frame.get("scene_id", idx)): frame for idx, frame in enumerate(previous_frames or [])}
+    template = frames_module._load_frame_template()
+    renderer = os.getenv("FRAME_RENDERER", "claude").lower()
+    new_records = []
+    for index, frame_obj in enumerate(frame_objects):
+        output_path = frames_dir / f"scene_{index:02d}.html"
+        previous_scene_id = int(frame_dicts[index].get("scene_id", index))
+        previous = previous_by_scene.get(previous_scene_id)
+        unchanged = previous and output_path.exists() and _frame_render_signature(previous) == _frame_render_signature(frame_dicts[index])
+        if not unchanged:
+            output_path.write_text(frames_module.render_frame_html_for_output(frame_obj, template), encoding="utf-8")
+        previous_record = records.get(previous_scene_id, {})
+        new_records.append({
+            "scene_id": index,
+            "renderer": previous_record.get("renderer", renderer) if unchanged else renderer,
+            "complete_html": output_path.exists() and output_path.stat().st_size > 0,
+        })
+    with open(metadata_path, "w", encoding="utf-8") as f:
+        json.dump({"renderer": renderer, "frames": new_records}, f, indent=2)
+
+
+def _write_script_from_frames(output_dir: Path, frame_dicts: list[dict]) -> None:
+    scenes = []
+    for frame in sorted(frame_dicts, key=lambda item: item.get("order", 0)):
+        scenes.append(
+            {
+                "text": frame.get("narration", ""),
+                "visual_type": "generated",
+                "visual_content": frame.get("visual_prompt", "") or frame.get("body", ""),
+                "source_table": frame.get("evidence_table"),
+                "source_figure": frame.get("evidence_figure"),
+                "source_video": frame.get("evidence_video"),
+            }
+        )
+    with open(output_dir / "script.json", "w", encoding="utf-8") as f:
+        json.dump(scenes, f, indent=2, ensure_ascii=False)
+
+
 def _clear_downstream_artifacts(output_dir: Path) -> None:
     """Remove generated artifacts that depend on script.json."""
     for name in [
@@ -227,9 +330,75 @@ def _clear_downstream_artifacts(output_dir: Path) -> None:
         shutil.rmtree(frames_dir)
 
 
+
+def _load_custom_source_uploads(output_dir: Path) -> dict:
+    uploads_path = output_dir / "source_uploads.json"
+    if not uploads_path.exists():
+        return {"tables": [], "videos": []}
+    try:
+        with open(uploads_path, "r", encoding="utf-8") as f:
+            data = json.load(f)
+    except (OSError, json.JSONDecodeError):
+        return {"tables": [], "videos": []}
+    return {"tables": data.get("tables", []), "videos": data.get("videos", [])}
+
+
+def _save_custom_source_uploads(output_dir: Path, uploads: dict) -> None:
+    output_dir.mkdir(parents=True, exist_ok=True)
+    with open(output_dir / "source_uploads.json", "w", encoding="utf-8") as f:
+        json.dump(uploads, f, indent=2, ensure_ascii=False)
+
+
+def _handle_source_uploads(request, output_dir: Path) -> bool:
+    uploads = _load_custom_source_uploads(output_dir)
+    changed = False
+    table_label = (request.POST.get("custom_table_label") or "").strip()
+    table_caption = (request.POST.get("custom_table_caption") or "").strip()
+    table_text = (request.POST.get("custom_table_text") or "").strip()
+    if table_label or table_caption or table_text:
+        uploads["tables"].append(
+            {
+                "id": f"custom-table-{len(uploads['tables']) + 1}",
+                "label": table_label or f"Custom Table {len(uploads['tables']) + 1}",
+                "caption": table_caption,
+                "text": table_text,
+                "custom": True,
+            }
+        )
+        changed = True
+
+    upload_dir = output_dir / "source_uploads"
+    for uploaded in request.FILES.getlist("custom_videos"):
+        safe_name = Path(uploaded.name).name.replace("/", "_").replace("\\", "_")
+        if not safe_name:
+            continue
+        upload_dir.mkdir(parents=True, exist_ok=True)
+        target = upload_dir / safe_name
+        counter = 1
+        while target.exists():
+            target = upload_dir / f"{target.stem}-{counter}{target.suffix}"
+            counter += 1
+        with open(target, "wb") as f:
+            for chunk in uploaded.chunks():
+                f.write(chunk)
+        uploads["videos"].append(
+            {
+                "id": f"custom-video-{len(uploads['videos']) + 1}",
+                "label": Path(target.name).stem,
+                "name": target.name,
+                "url": f"{settings.MEDIA_URL}{output_dir.name}/source_uploads/{target.name}",
+                "caption": (request.POST.get("custom_video_caption") or "").strip(),
+                "custom": True,
+            }
+        )
+        changed = True
+    if changed:
+        _save_custom_source_uploads(output_dir, uploads)
+    return changed
+
 def _load_source_snippets(output_dir: Path) -> dict:
     """Load figures, tables, and local PDFs that may help the user edit scenes."""
-    snippets = {"figures": [], "tables": [], "pdfs": []}
+    snippets = {"figures": [], "tables": [], "videos": [], "pdfs": []}
     paper_path = output_dir / "paper.json"
     if paper_path.exists():
         try:
@@ -283,6 +452,10 @@ def _load_source_snippets(output_dir: Path) -> dict:
                     break
         except Exception as exc:
             logger.warning(f"Could not parse XML table snippets: {exc}")
+
+    custom_uploads = _load_custom_source_uploads(output_dir)
+    snippets["tables"].extend(custom_uploads.get("tables", []))
+    snippets["videos"].extend(custom_uploads.get("videos", []))
 
     for pdf_path in sorted(output_dir.glob("*.pdf"))[:4]:
         snippets["pdfs"].append(
@@ -1789,6 +1962,18 @@ def pipeline_result(request, pmid: str):
     can_manage = _can_manage_paper(request.user, pmid)
     output_dir = Path(settings.MEDIA_ROOT) / pmid
     html_presentation_path = output_dir / "presentation.html"
+    if (output_dir / "frames.json").exists() and os.getenv("PRESENTATION_PROVIDER", "templates").lower() != "claude":
+        try:
+            presentation_module = _pipeline_module("presentation")
+            presentation_module.render_structured_presentation(
+                output_dir=output_dir,
+                output_path=html_presentation_path,
+                audio_src="audio.wav",
+                paper_path=output_dir / "paper.json",
+            )
+        except Exception as exc:
+            logger.warning(f"Could not refresh structured presentation for {pmid}: {exc}")
+
     if html_presentation_path.exists():
         presentation_html_doc = html_presentation_path.read_text(encoding="utf-8")
         media_base_url = f"{settings.MEDIA_URL}{pmid}/"
@@ -1927,6 +2112,13 @@ def review_script(request, pmid: str):
         messages.error(request, "The generated script could not be loaded. Please retry this paper.")
         return redirect("pipeline_status", pmid=pmid)
 
+    if request.method == "POST" and request.POST.get("action") == "add_source":
+        if _handle_source_uploads(request, output_dir):
+            messages.success(request, "Source material added.")
+        else:
+            messages.info(request, "Add a table or choose a video file before uploading source material.")
+        return redirect("review_script", pmid=pmid)
+
     if request.method == "POST":
         source_snippets = _load_source_snippets(output_dir)
         edited_scenes = []
@@ -1937,6 +2129,7 @@ def review_script(request, pmid: str):
             visual_content = (request.POST.get(f"scene_{index}_visual") or "").strip()
             source_table = None
             source_figure = None
+            source_video = None
             table_index_raw = (request.POST.get(f"scene_{index}_source_table") or "").strip()
             if table_index_raw:
                 try:
@@ -1952,6 +2145,13 @@ def review_script(request, pmid: str):
                     source_figure["url"] = _source_figure_proxy_url(pmid, figure_index)
                 except (ValueError, IndexError):
                     errors.append(f"Scene {index + 1} selected image is no longer available.")
+            video_index_raw = (request.POST.get(f"scene_{index}_source_video") or "").strip()
+            if video_index_raw:
+                try:
+                    video_index = int(video_index_raw)
+                    source_video = source_snippets["videos"][video_index]
+                except (ValueError, IndexError):
+                    errors.append(f"Scene {index + 1} selected video is no longer available.")
             if not text:
                 errors.append(f"Scene {index + 1} narration cannot be empty.")
             if not visual_content:
@@ -1966,6 +2166,11 @@ def review_script(request, pmid: str):
                     f"{visual_content}\n\nUse source image {source_figure.get('id') or 'Figure'}: "
                     f"{source_figure.get('caption') or ''}"
                 ).strip()
+            if source_video and "source video" not in visual_content.lower():
+                visual_content = (
+                    f"{visual_content}\n\nUse source video {source_video.get('label') or source_video.get('name') or 'Video'}: "
+                    f"{source_video.get('caption') or ''}"
+                ).strip()
             edited_scenes.append(
                 {
                     "text": text,
@@ -1973,6 +2178,7 @@ def review_script(request, pmid: str):
                     "visual_content": visual_content,
                     "source_table": source_table,
                     "source_figure": source_figure,
+                    "source_video": source_video,
                 }
             )
 
@@ -2022,6 +2228,159 @@ def review_script(request, pmid: str):
         },
     )
 
+
+
+@login_required
+def edit_frames(request, pmid: str):
+    """Edit structured frames before regenerating audio and presentation."""
+    if not _can_manage_paper(request.user, pmid):
+        raise Http404("Generation not found")
+
+    output_dir = Path(settings.MEDIA_ROOT) / pmid
+    if not (output_dir / "script.json").exists():
+        messages.info(request, "The script is not ready yet. Generate or review the script first.")
+        return redirect("pipeline_status", pmid=pmid)
+
+    try:
+        frames = _ensure_frame_artifacts(output_dir)
+    except Exception as exc:
+        logger.warning(f"Could not load editable frames for {pmid}: {exc}")
+        messages.error(request, "Editable frames could not be loaded. Please retry this paper.")
+        return redirect("pipeline_status", pmid=pmid)
+
+    source_snippets = _load_source_snippets(output_dir)
+    layout_choices = [
+        ("title_hook", "Title/Hook"),
+        ("problem", "Problem"),
+        ("key_finding", "Key Finding"),
+        ("source_figure", "Source Figure"),
+        ("source_table", "Source Table"),
+        ("comparison", "Comparison"),
+        ("process_timeline", "Process/Timeline"),
+        ("impact_takeaway", "Impact/Takeaway"),
+    ]
+
+    if request.method == "POST":
+        count = int(request.POST.get("frame_count") or 0)
+        edited = []
+        errors = []
+        for index in range(count):
+            if request.POST.get(f"frame_{index}_delete"):
+                continue
+            headline = (request.POST.get(f"frame_{index}_headline") or "").strip()
+            narration = (request.POST.get(f"frame_{index}_narration") or "").strip()
+            if not headline:
+                errors.append(f"Frame {index + 1} headline cannot be empty.")
+            if not narration:
+                errors.append(f"Frame {index + 1} narration cannot be empty.")
+            layout = request.POST.get(f"frame_{index}_layout") or "key_finding"
+            order_raw = request.POST.get(f"frame_{index}_order") or str(index)
+            try:
+                order = int(order_raw)
+            except ValueError:
+                order = index
+            evidence_table = None
+            evidence_figure = None
+            evidence_video = None
+            table_raw = (request.POST.get(f"frame_{index}_source_table") or "").strip()
+            figure_raw = (request.POST.get(f"frame_{index}_source_figure") or "").strip()
+            video_raw = (request.POST.get(f"frame_{index}_source_video") or "").strip()
+            if table_raw:
+                try:
+                    evidence_table = source_snippets["tables"][int(table_raw)]
+                except (ValueError, IndexError):
+                    errors.append(f"Frame {index + 1} selected table is no longer available.")
+            if figure_raw:
+                try:
+                    evidence_figure = dict(source_snippets["figures"][int(figure_raw)])
+                    evidence_figure["url"] = _source_figure_proxy_url(pmid, int(figure_raw))
+                except (ValueError, IndexError):
+                    errors.append(f"Frame {index + 1} selected image is no longer available.")
+            if video_raw:
+                try:
+                    evidence_video = source_snippets["videos"][int(video_raw)]
+                except (ValueError, IndexError):
+                    errors.append(f"Frame {index + 1} selected video is no longer available.")
+            # Slide HTML is intentionally not user-editable in the simplified editor.
+            # Visual notes should guide generation, while structured fields render the video.
+            html_override = ""
+            edited.append(
+                {
+                    "scene_id": len(edited),
+                    "order": order,
+                    "layout": layout,
+                    "headline": headline,
+                    "narration": narration,
+                    "body": (request.POST.get(f"frame_{index}_body") or "").strip(),
+                    "key_points": [line.strip() for line in (request.POST.get(f"frame_{index}_key_points") or "").splitlines() if line.strip()],
+                    "visual_prompt": (request.POST.get(f"frame_{index}_visual_prompt") or "").strip(),
+                    "evidence_table": evidence_table,
+                    "evidence_figure": evidence_figure,
+                    "evidence_video": evidence_video,
+                    "accent_text": (request.POST.get(f"frame_{index}_accent_text") or "").strip(),
+                    "theme": request.POST.get(f"frame_{index}_theme") or "dark",
+                    "animation": "fade",
+                    "html_override": html_override,
+                }
+            )
+        if not edited:
+            errors.append("At least one frame is required.")
+        if errors:
+            for error in errors:
+                messages.error(request, error)
+        else:
+            edited = sorted(edited, key=lambda item: item.get("order", 0))
+            for new_index, frame in enumerate(edited):
+                frame["scene_id"] = new_index
+                frame["order"] = new_index
+            _save_frame_artifacts(output_dir, edited, previous_frames=frames)
+            _write_script_from_frames(output_dir, edited)
+            _clear_after_frame_edits(output_dir)
+            _start_pipeline_async(pmid, output_dir, request.user.id, review_required=False)
+            messages.success(request, "Frames saved. Regenerating narration timing and presentation now.")
+            return redirect("pipeline_status", pmid=pmid)
+
+    frames_module = _pipeline_module("frames")
+    frames_dir = output_dir / "frames"
+    for index, frame in enumerate(frames):
+        frame["key_points_text"] = "\n".join(frame.get("key_points") or [])
+        frame_file = frames_dir / f"scene_{index:02d}.html"
+        if frame_file.exists():
+            frame["slide_html"] = frame_file.read_text(encoding="utf-8")
+        else:
+            try:
+                frame_obj = frames_module._frame_from_dict(frame, index)
+                frame["slide_html"] = frames_module.render_frame_html(frame_obj)
+            except Exception:
+                frame["slide_html"] = frame.get("html_override", "")
+    return render(
+        request,
+        "frame_review.html",
+        {
+            "pmid": pmid,
+            "frames": frames,
+            "layout_choices": layout_choices,
+            "source_snippets": source_snippets,
+        },
+    )
+
+
+@login_required
+def export_mp4(request, pmid: str):
+    """Generate and download an MP4 export for a completed structured presentation."""
+    if not _can_manage_paper(request.user, pmid):
+        raise Http404("Generation not found")
+    output_dir = Path(settings.MEDIA_ROOT) / pmid
+    output_path = output_dir / "presentation.mp4"
+    if not output_path.exists():
+        try:
+            mp4_module = _pipeline_module("mp4_export")
+            mp4_module.export_mp4(output_dir, output_path)
+        except Exception as exc:
+            logger.warning(f"Could not export MP4 for {pmid}: {exc}")
+            messages.error(request, f"MP4 export failed: {exc}")
+            return redirect("pipeline_result", pmid=pmid)
+    return FileResponse(open(output_path, "rb"), as_attachment=True, filename=f"{pmid}.mp4", content_type="video/mp4")
 
 def source_figure_image(request, pmid: str, index: int):
     """Serve an extracted source figure through the local app."""

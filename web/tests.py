@@ -1,10 +1,12 @@
 import json
+import os
 import shutil
 import tempfile
 from pathlib import Path
 from unittest.mock import patch
 
 from django.contrib.auth.models import User
+from django.core.files.uploadedfile import SimpleUploadedFile
 from django.test import TestCase, override_settings
 from django.urls import reverse
 
@@ -13,6 +15,8 @@ from web.models import VideoGenerationJob
 
 class ShippingControlsTests(TestCase):
     def setUp(self):
+        self._old_frame_renderer = os.environ.get("FRAME_RENDERER")
+        os.environ["FRAME_RENDERER"] = "templates"
         self.media_root = Path(tempfile.mkdtemp(prefix="infodemica-test-media-"))
         self.user = User.objects.create_user(
             username="shipper",
@@ -21,6 +25,10 @@ class ShippingControlsTests(TestCase):
         )
 
     def tearDown(self):
+        if self._old_frame_renderer is None:
+            os.environ.pop("FRAME_RENDERER", None)
+        else:
+            os.environ["FRAME_RENDERER"] = self._old_frame_renderer
         shutil.rmtree(self.media_root, ignore_errors=True)
 
     def login(self):
@@ -331,4 +339,247 @@ class ShippingControlsTests(TestCase):
         saved = json.loads((output_dir / "script.json").read_text(encoding="utf-8"))
         self.assertEqual(saved[0]["source_figure"]["id"], "F1")
         self.assertIn("Use source image F1", saved[0]["visual_content"])
+        shutil.rmtree(output_dir, ignore_errors=True)
+
+    @override_settings(MEDIA_ROOT=tempfile.gettempdir())
+    def test_edit_frames_saves_structured_frames_and_requeues_pipeline(self):
+        self.login()
+        self.make_job(paper_id="PMCFRAMES", status="completed", task_id="frames-task")
+        output_dir = Path(tempfile.gettempdir()) / "PMCFRAMES"
+        frames_dir = output_dir / "frames"
+        frames_dir.mkdir(parents=True, exist_ok=True)
+        (output_dir / "script.json").write_text(
+            json.dumps([
+                {"text": "Old narration.", "visual_type": "generated", "visual_content": "Old visual."}
+            ]),
+            encoding="utf-8",
+        )
+        (output_dir / "frames.json").write_text(
+            json.dumps([
+                {
+                    "scene_id": 0,
+                    "order": 0,
+                    "layout": "problem",
+                    "headline": "Old headline",
+                    "narration": "Old narration.",
+                    "body": "Old body",
+                    "key_points": ["Old point"],
+                    "visual_prompt": "Old visual.",
+                    "theme": "dark",
+                    "html_override": "<section>Old override</section>",
+                }
+            ]),
+            encoding="utf-8",
+        )
+        (frames_dir / "scene_00.html").write_text("<section>old</section>", encoding="utf-8")
+        (output_dir / "audio.wav").write_bytes(b"stale audio")
+        (output_dir / "audio_metadata.json").write_text("{}", encoding="utf-8")
+        (output_dir / "presentation.html").write_text("<html></html>", encoding="utf-8")
+
+        with patch("web.views._start_pipeline_async") as start_pipeline:
+            response = self.client.post(
+                reverse("edit_frames", args=["PMCFRAMES"]),
+                {
+                    "frame_count": "1",
+                    "frame_0_order": "0",
+                    "frame_0_layout": "key_finding",
+                    "frame_0_theme": "light",
+                    "frame_0_headline": "Edited headline",
+                    "frame_0_narration": "Edited narration.",
+                    "frame_0_body": "Edited body",
+                    "frame_0_key_points": "Point one\nPoint two",
+                    "frame_0_visual_prompt": "Edited visual.",
+                    "frame_0_accent_text": "Key Finding",
+                },
+            )
+
+        self.assertEqual(response.status_code, 302)
+        self.assertIn("/status/PMCFRAMES/", response["Location"])
+        start_pipeline.assert_called_once()
+        self.assertFalse(start_pipeline.call_args.kwargs["review_required"])
+        saved_frames = json.loads((output_dir / "frames.json").read_text(encoding="utf-8"))
+        self.assertEqual(saved_frames[0]["headline"], "Edited headline")
+        self.assertEqual(saved_frames[0]["layout"], "key_finding")
+        self.assertEqual(saved_frames[0]["html_override"], "")
+        self.assertEqual(saved_frames[0]["visual_prompt"], "Edited visual.")
+        rendered = (frames_dir / "scene_00.html").read_text(encoding="utf-8")
+        self.assertIn("generated-visual", rendered)
+        self.assertIn("visual-abstract", rendered)
+        self.assertNotIn("Edited visual.", rendered)
+        saved_script = json.loads((output_dir / "script.json").read_text(encoding="utf-8"))
+        self.assertEqual(saved_script[0]["text"], "Edited narration.")
+        self.assertFalse((output_dir / "audio.wav").exists())
+        self.assertFalse((output_dir / "presentation.html").exists())
+        self.assertTrue((frames_dir / "scene_00.html").exists())
+        shutil.rmtree(output_dir, ignore_errors=True)
+
+    @override_settings(MEDIA_ROOT=tempfile.gettempdir())
+    def test_edit_frames_regenerates_html_when_only_structured_fields_change(self):
+        self.login()
+        self.make_job(paper_id="PMCFRAMEHTML", status="completed", task_id="frame-html-task")
+        output_dir = Path(tempfile.gettempdir()) / "PMCFRAMEHTML"
+        output_dir.mkdir(parents=True, exist_ok=True)
+        (output_dir / "script.json").write_text(
+            json.dumps([
+                {"text": "Old narration.", "visual_type": "generated", "visual_content": "Old visual."}
+            ]),
+            encoding="utf-8",
+        )
+        (output_dir / "frames.json").write_text(
+            json.dumps([
+                {
+                    "scene_id": 0,
+                    "order": 0,
+                    "layout": "problem",
+                    "headline": "Old headline",
+                    "narration": "Old narration.",
+                    "body": "Old body",
+                    "key_points": ["Old point"],
+                    "visual_prompt": "Old visual.",
+                    "theme": "dark",
+                    "html_override": "",
+                }
+            ]),
+            encoding="utf-8",
+        )
+
+        response = self.client.get(reverse("edit_frames", args=["PMCFRAMEHTML"]))
+        self.assertEqual(response.status_code, 200)
+        self.assertNotContains(response, "Slide HTML")
+        self.assertNotContains(response, "Layout")
+        self.assertContains(response, "Visual Notes")
+
+        with patch("web.views._start_pipeline_async"):
+            response = self.client.post(
+                reverse("edit_frames", args=["PMCFRAMEHTML"]),
+                {
+                    "frame_count": "1",
+                    "frame_0_order": "0",
+                    "frame_0_layout": "key_finding",
+                    "frame_0_theme": "light",
+                    "frame_0_headline": "Edited headline",
+                    "frame_0_narration": "Edited narration.",
+                    "frame_0_body": "Edited body",
+                    "frame_0_key_points": "Point one\nPoint two",
+                    "frame_0_visual_prompt": "Edited visual.",
+                    "frame_0_accent_text": "Key Finding",
+                },
+            )
+
+        self.assertEqual(response.status_code, 302)
+        saved_frames = json.loads((output_dir / "frames.json").read_text(encoding="utf-8"))
+        self.assertEqual(saved_frames[0]["headline"], "Edited headline")
+        self.assertEqual(saved_frames[0]["html_override"], "")
+        rendered = (output_dir / "frames" / "scene_00.html").read_text(encoding="utf-8")
+        self.assertIn("Edited headline", rendered)
+        self.assertNotIn("Old headline", rendered)
+        self.assertNotIn("Edited visual.", rendered)
+        shutil.rmtree(output_dir, ignore_errors=True)
+
+    @override_settings(MEDIA_ROOT=tempfile.gettempdir())
+    def test_visual_notes_generate_visual_motif_without_visible_instruction_text(self):
+        self.login()
+        self.make_job(paper_id="PMCVISUALNOTE", status="completed", task_id="visual-note-task")
+        output_dir = Path(tempfile.gettempdir()) / "PMCVISUALNOTE"
+        frames_dir = output_dir / "frames"
+        frames_dir.mkdir(parents=True, exist_ok=True)
+        (output_dir / "script.json").write_text(
+            json.dumps([
+                {"text": "Narration for frame.", "visual_type": "generated", "visual_content": "Old visual."}
+            ]),
+            encoding="utf-8",
+        )
+        (output_dir / "frames.json").write_text(
+            json.dumps([
+                {
+                    "scene_id": 0,
+                    "order": 0,
+                    "layout": "key_finding",
+                    "headline": "Friendly frame",
+                    "narration": "Narration for frame.",
+                    "body": "Supporting copy.",
+                    "key_points": [],
+                    "visual_prompt": "Old visual.",
+                    "theme": "dark",
+                    "html_override": "",
+                }
+            ]),
+            encoding="utf-8",
+        )
+
+        with patch("web.views._start_pipeline_async"):
+            response = self.client.post(
+                reverse("edit_frames", args=["PMCVISUALNOTE"]),
+                {
+                    "frame_count": "1",
+                    "frame_0_order": "0",
+                    "frame_0_layout": "key_finding",
+                    "frame_0_theme": "dark",
+                    "frame_0_headline": "Friendly frame",
+                    "frame_0_narration": "Narration for frame.",
+                    "frame_0_body": "Supporting copy.",
+                    "frame_0_key_points": "",
+                    "frame_0_visual_prompt": "Include a smiling face",
+                    "frame_0_accent_text": "Key Finding",
+                },
+            )
+
+        self.assertEqual(response.status_code, 302)
+        rendered = (frames_dir / "scene_00.html").read_text(encoding="utf-8")
+        self.assertIn("generated-visual visual-face", rendered)
+        self.assertIn('class="face"', rendered)
+        self.assertNotIn("Include a smiling face", rendered)
+        shutil.rmtree(output_dir, ignore_errors=True)
+
+    @override_settings(MEDIA_ROOT=tempfile.gettempdir())
+    def test_export_mp4_downloads_existing_file(self):
+        self.login()
+        self.make_job(paper_id="PMCMP4", status="completed", task_id="mp4-task")
+        output_dir = Path(tempfile.gettempdir()) / "PMCMP4"
+        output_dir.mkdir(parents=True, exist_ok=True)
+        (output_dir / "presentation.mp4").write_bytes(b"fake mp4")
+
+        response = self.client.get(reverse("export_mp4", args=["PMCMP4"]))
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response["Content-Type"], "video/mp4")
+        self.assertIn("PMCMP4.mp4", response["Content-Disposition"])
+        shutil.rmtree(output_dir, ignore_errors=True)
+
+    @override_settings(MEDIA_ROOT=tempfile.gettempdir())
+    def test_review_script_adds_custom_source_table_and_video(self):
+        self.login()
+        self.make_job(paper_id="PMCSOURCEUPLOAD", status="pending", task_id="source-upload-task")
+        output_dir = Path(tempfile.gettempdir()) / "PMCSOURCEUPLOAD"
+        output_dir.mkdir(parents=True, exist_ok=True)
+        (output_dir / "script.json").write_text(
+            json.dumps([
+                {"text": "Narration.", "visual_type": "generated", "visual_content": "Visual."}
+            ]),
+            encoding="utf-8",
+        )
+        (output_dir / "paper.json").write_text(json.dumps({"figures": [], "tables": []}), encoding="utf-8")
+        upload = SimpleUploadedFile("clip.mp4", b"fake video", content_type="video/mp4")
+
+        response = self.client.post(
+            reverse("review_script", args=["PMCSOURCEUPLOAD"]),
+            {
+                "action": "add_source",
+                "custom_table_label": "Custom Table A",
+                "custom_table_caption": "Uploaded table caption.",
+                "custom_table_text": "A | B\n1 | 2",
+                "custom_video_caption": "Uploaded video caption.",
+                "custom_videos": upload,
+            },
+        )
+
+        self.assertEqual(response.status_code, 302)
+        uploads = json.loads((output_dir / "source_uploads.json").read_text(encoding="utf-8"))
+        self.assertEqual(uploads["tables"][0]["label"], "Custom Table A")
+        self.assertEqual(uploads["videos"][0]["name"], "clip.mp4")
+
+        response = self.client.get(reverse("review_script", args=["PMCSOURCEUPLOAD"]))
+        self.assertContains(response, "Custom Table A")
+        self.assertContains(response, "Uploaded video caption.")
+        self.assertContains(response, "Use source video in this scene")
         shutil.rmtree(output_dir, ignore_errors=True)

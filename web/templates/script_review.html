@@ -6,7 +6,36 @@
   <h1>Review Script</h1>
   <p>Paper <strong>{{ pmid }}</strong> has an AI-generated draft. Edit the narration and visual notes before audio and the final presentation are created.</p>
 
-  {% if source_snippets.figures or source_snippets.tables or source_snippets.pdfs %}
+
+  <section class="source-snippets custom-source-upload">
+    <div class="source-snippets-header">
+      <h2>Add source material</h2>
+      <p>Add your own table text or upload source video clips to make them selectable in scenes and frames.</p>
+    </div>
+    <form method="post" enctype="multipart/form-data" class="custom-source-form">
+      {% csrf_token %}
+      <input type="hidden" name="action" value="add_source">
+      <div class="frame-edit-grid">
+        <div>
+          <label for="custom_table_label">Table label</label>
+          <input id="custom_table_label" name="custom_table_label" class="script-source-select" placeholder="Table A">
+        </div>
+        <div>
+          <label for="custom_table_caption">Table caption</label>
+          <input id="custom_table_caption" name="custom_table_caption" class="script-source-select" placeholder="Key outcomes by group">
+        </div>
+      </div>
+      <label for="custom_table_text">Table text</label>
+      <textarea id="custom_table_text" name="custom_table_text" rows="5" placeholder="Column A | Column B&#10;1 | 2"></textarea>
+      <label for="custom_videos">Source videos</label>
+      <input id="custom_videos" name="custom_videos" type="file" accept="video/*" multiple class="script-source-select">
+      <label for="custom_video_caption">Video caption</label>
+      <input id="custom_video_caption" name="custom_video_caption" class="script-source-select" placeholder="Optional caption for uploaded video clips">
+      <div class="button-group"><button type="submit" class="btn-secondary">Add Source Material</button></div>
+    </form>
+  </section>
+
+  {% if source_snippets.figures or source_snippets.tables or source_snippets.videos or source_snippets.pdfs %}
   <section class="source-snippets">
     <div class="source-snippets-header">
       <h2>Source snippets</h2>
@@ -36,6 +65,20 @@
             {% if figure.url %}<img src="{{ source_image_url }}" alt="{{ figure.id|default:'Source figure' }}" class="source-snippet-image" loading="lazy">{% endif %}
             {% if figure.caption %}<p>{{ figure.caption|truncatewords:45 }}</p>{% endif %}
             {% if figure.url %}<a href="{{ source_image_url }}">Open source image</a>{% endif %}
+          </article>
+        {% endfor %}
+      </div>
+    {% endif %}
+
+
+    {% if source_snippets.videos %}
+      <h3>Videos</h3>
+      <div class="source-snippet-grid">
+        {% for video in source_snippets.videos %}
+          <article class="source-snippet">
+            <strong>{{ video.label|default:video.name|default:"Video" }}</strong>
+            {% if video.url %}<video src="{{ video.url }}" controls muted playsinline class="source-snippet-image"></video>{% endif %}
+            {% if video.caption %}<p>{{ video.caption|truncatewords:45 }}</p>{% endif %}
           </article>
         {% endfor %}
       </div>
@@ -114,6 +157,25 @@
                 {% if scene.source_figure and scene.source_figure.id == figure.id %}selected{% endif %}
               >
                 {{ figure.id|default:"Figure" }}{% if figure.caption %} - {{ figure.caption|truncatechars:90 }}{% endif %}
+              </option>
+            {% endfor %}
+          </select>
+          {% endif %}
+
+          {% if source_snippets.videos %}
+          <label for="scene_{{ forloop.counter0 }}_source_video">Use source video in this scene</label>
+          <select
+            id="scene_{{ forloop.counter0 }}_source_video"
+            name="scene_{{ forloop.counter0 }}_source_video"
+            class="script-source-select"
+          >
+            <option value="">No video selected</option>
+            {% for video in source_snippets.videos %}
+              <option
+                value="{{ forloop.counter0 }}"
+                {% if scene.source_video and scene.source_video.id == video.id %}selected{% endif %}
+              >
+                {{ video.label|default:video.name|default:"Video" }}{% if video.caption %} - {{ video.caption|truncatechars:90 }}{% endif %}
               </option>
             {% endfor %}
           </select>

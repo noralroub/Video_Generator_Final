@@ -12,7 +12,7 @@ from frames import (
     build_presentation,
     generate_frames_artifacts,
 )
-from presentation import render_presentation_claude
+from presentation import render_presentation_claude, render_structured_presentation
 from pubmed import fetch_paper
 from scenes import generate_scenes, save_scenes, load_scenes
 
@@ -99,14 +99,38 @@ def check_audio_generated(output_dir: Path) -> bool:
 
 
 def check_frames_generated(output_dir: Path) -> bool:
-    """Check if frames.json and basic frame HTML files exist."""
+    """Check if frames.json and all requested frame HTML files exist for the active renderer."""
     frames_json = output_dir / "frames.json"
+    script_json = output_dir / "script.json"
     frames_dir = output_dir / "frames"
-    if not frames_json.exists() or not frames_dir.exists():
+    if not frames_json.exists() or not script_json.exists() or not frames_dir.exists():
         return False
-    # Require at least one HTML frame file
-    html_files = list(frames_dir.glob("scene_*.html"))
-    return len(html_files) > 0
+    try:
+        scenes = load_scenes(script_json)
+    except Exception:
+        return False
+    html_files = [frames_dir / f"scene_{idx:02d}.html" for idx in range(len(scenes))]
+    if not all(path.exists() and path.stat().st_size > 0 for path in html_files):
+        return False
+
+    renderer = os.getenv("FRAME_RENDERER", "claude").lower()
+    if renderer == "claude":
+        metadata_path = output_dir / "frame_render_metadata.json"
+        if not metadata_path.exists():
+            return False
+        try:
+            with open(metadata_path, "r", encoding="utf-8") as f:
+                metadata = json.load(f)
+        except (OSError, json.JSONDecodeError):
+            return False
+        records = metadata.get("frames") or []
+        return (
+            metadata.get("renderer") == "claude"
+            and len(records) == len(scenes)
+            and all(record.get("complete_html") for record in records)
+        )
+
+    return True
 
 
 def check_presentation_built(output_dir: Path) -> bool:
@@ -248,7 +272,8 @@ def _generate_frames_step(output_dir: Path) -> None:
 
 def _build_presentation_step(output_dir: Path) -> None:
     """Execute the build-presentation step."""
-    if os.getenv("PRESENTATION_PROVIDER", "").lower() == "claude":
+    provider = os.getenv("PRESENTATION_PROVIDER", "templates").lower()
+    if provider == "claude":
         render_presentation_claude(
             script_path=output_dir / "script.json",
             output_path=output_dir / "presentation.html",
@@ -257,6 +282,14 @@ def _build_presentation_step(output_dir: Path) -> None:
             paper_path=output_dir / "paper.json",
         )
         logger.info("Generated Claude HTML presentation")
+    else:
+        render_structured_presentation(
+            output_dir=output_dir,
+            output_path=output_dir / "presentation.html",
+            audio_src="audio.wav",
+            paper_path=output_dir / "paper.json",
+        )
+        logger.info("Generated template-based structured HTML presentation")
 
     build_presentation(output_dir)
     logger.info("Built presentation.json from frames and audio metadata")
