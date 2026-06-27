@@ -2367,12 +2367,16 @@ def edit_frames(request, pmid: str):
 
 @login_required
 def export_mp4(request, pmid: str):
-    """Generate and download an MP4 export for a completed structured presentation."""
+    """Generate and download an MP4 by recording presentation.html in headless Chromium."""
     if not _can_manage_paper(request.user, pmid):
         raise Http404("Generation not found")
     output_dir = Path(settings.MEDIA_ROOT) / pmid
     output_path = output_dir / "presentation.mp4"
-    if not output_path.exists():
+    presentation_html = output_dir / "presentation.html"
+    needs_export = not output_path.exists()
+    if not needs_export and presentation_html.exists():
+        needs_export = presentation_html.stat().st_mtime > output_path.stat().st_mtime
+    if needs_export:
         try:
             mp4_module = _pipeline_module("mp4_export")
             mp4_module.export_mp4(output_dir, output_path)
