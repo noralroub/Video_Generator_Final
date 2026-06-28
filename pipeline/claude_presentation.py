@@ -38,7 +38,11 @@ Creative direction:
 2. Invent a UNIQUE visual identity for THIS paper — fresh palette, motifs, and scene designs suited to the topic. Every paper should look different.
 3. Use a full-bleed 9:16 stage (width 100%, aspect-ratio 9/16, no phone-chrome mockup borders). Center the stage on the page.
 4. Use system fonts only: {font_stack}. Do NOT load external fonts, CDNs, libraries, or network assets.
-5. Rich per-scene CSS and JavaScript animations are encouraged (counters, bars, staggered reveals, SVG rings, etc.).
+5. REQUIRED minimum motion on every scene:
+   - Each `.scene` includes a `.ambient` wrapper with 2 `.ambient-orb` divs (continuous background drift).
+   - All on-screen text uses `data-reveal` with staggered `data-enter-ms` (phrase-by-phrase, synced to narration pacing within the scene).
+   - Source figure `<img>` tags are wrapped in `.ken-burns`.
+   Additional per-scene animation (counters, bars, SVG rings, etc.) is encouraged where it fits the content.
 6. Use narration as primary on-screen text — large, readable, mobile-friendly. Do not dump full narration as a wall of text.
 7. Translate visual_description into HTML/CSS visuals. Do not display visual_description as visible text.
 8. If source_table is present, render a compact readable data card (2-4 key rows).
@@ -65,6 +69,30 @@ def _sample_path() -> Path:
     return Path(__file__).parent / "templates" / "sample_presentation.html"
 
 
+def _motion_snippet_path() -> Path:
+    return Path(__file__).parent / "templates" / "motion_sync_snippet.html"
+
+
+def _load_motion_css() -> str:
+    path = _motion_snippet_path()
+    if not path.exists():
+        return ""
+    text = path.read_text(encoding="utf-8")
+    match = re.search(r"<style>(.*?)</style>", text, re.DOTALL | re.IGNORECASE)
+    return match.group(1).strip() if match else ""
+
+
+def _load_motion_example_markup() -> str:
+    path = _motion_snippet_path()
+    if not path.exists():
+        return ""
+    lines = path.read_text(encoding="utf-8").splitlines()
+    start = next((i for i, line in enumerate(lines) if "Example scene markup" in line), None)
+    if start is None:
+        return ""
+    return "\n".join(lines[start : start + 12])
+
+
 def _load_sample_excerpt(max_chars: int = 12000) -> str:
     """Load a curated excerpt from the sample presentation for style reference."""
     path = _sample_path()
@@ -82,7 +110,10 @@ def _load_sample_excerpt(max_chars: int = 12000) -> str:
     scene_block = ""
     if scene_start is not None:
         scene_block = "\n".join(lines[scene_start : scene_start + 15])
+    motion_example = _load_motion_example_markup()
     excerpt = f"{css_block}\n\n<!-- Example scene markup -->\n{scene_block}"
+    if motion_example:
+        excerpt += f"\n\n{motion_example}"
     if len(excerpt) > max_chars:
         excerpt = excerpt[:max_chars] + "\n<!-- truncated -->"
     return excerpt
@@ -145,6 +176,177 @@ def _strip_code_fence(text: str) -> str:
     return "\n".join(lines).strip()
 
 
+def _reveal_sync_script() -> str:
+    """Standalone reveal handler — additive when Claude provides its own scene sync."""
+    return f"""
+<script data-infodemica-reveals="true">
+(function () {{
+  var narration = document.getElementById('narration');
+  var scenes = Array.prototype.slice.call(document.querySelectorAll('.scene'));
+  var sceneDurations = {PLACEHOLDER_SCENE_DURATIONS_JSON};
+  var lastSceneIndex = -1;
+
+  function sceneIndexForTime(time) {{
+    var elapsed = 0;
+    for (var i = 0; i < sceneDurations.length; i += 1) {{
+      elapsed += Number(sceneDurations[i]) || 0;
+      if (time <= elapsed) return i;
+    }}
+    return Math.max(0, scenes.length - 1);
+  }}
+
+  function sceneStartTime(index) {{
+    var start = 0;
+    for (var i = 0; i < index; i += 1) {{
+      start += Number(sceneDurations[i]) || 0;
+    }}
+    return start;
+  }}
+
+  function resetReveals() {{
+    document.querySelectorAll('[data-reveal], .reveal-line').forEach(function (el) {{
+      el.classList.remove('is-visible');
+    }});
+  }}
+
+  function updateReveals(sceneIndex, currentTime) {{
+    var localMs = (currentTime - sceneStartTime(sceneIndex)) * 1000;
+    var scene = scenes[sceneIndex];
+    if (!scene) return;
+    scene.querySelectorAll('[data-reveal], .reveal-line').forEach(function (el) {{
+      var enterMs = parseFloat(el.getAttribute('data-enter-ms') || '0');
+      if (localMs >= enterMs) el.classList.add('is-visible');
+    }});
+  }}
+
+  function update() {{
+    if (!narration || !scenes.length) return;
+    var current = narration.currentTime || 0;
+    var idx = sceneIndexForTime(current);
+    if (idx !== lastSceneIndex) {{
+      lastSceneIndex = idx;
+      resetReveals();
+    }}
+    updateReveals(idx, current);
+  }}
+
+  if (narration) {{
+    narration.addEventListener('timeupdate', update);
+    narration.addEventListener('seeked', update);
+    narration.addEventListener('ended', update);
+  }}
+  update();
+}}());
+</script>
+"""
+
+
+def _fallback_sync_script() -> str:
+    """Full audio sync with scene switching, controls, and staggered reveals."""
+    return f"""
+<script data-infodemica-reveals="true">
+(function () {{
+  var narration = document.getElementById('narration');
+  var scenes = Array.prototype.slice.call(document.querySelectorAll('.scene'));
+  var sceneDurations = {PLACEHOLDER_SCENE_DURATIONS_JSON};
+  var totalDuration = {PLACEHOLDER_TOTAL_DURATION_JSON};
+  var lastSceneIndex = -1;
+  var playButton = document.querySelector('[data-play-toggle]') || document.querySelector('.play-button') || document.querySelector('button');
+  var progressBar = document.querySelector('[data-progress-bar]') || document.querySelector('.progress-fill') || document.querySelector('.progress-bar');
+  var timeEl = document.querySelector('[data-time]');
+
+  function sceneIndexForTime(time) {{
+    var elapsed = 0;
+    for (var i = 0; i < sceneDurations.length; i += 1) {{
+      elapsed += Number(sceneDurations[i]) || 0;
+      if (time <= elapsed) return i;
+    }}
+    return Math.max(0, scenes.length - 1);
+  }}
+
+  function sceneStartTime(index) {{
+    var start = 0;
+    for (var i = 0; i < index; i += 1) {{
+      start += Number(sceneDurations[i]) || 0;
+    }}
+    return start;
+  }}
+
+  function format(seconds) {{
+    seconds = Math.max(0, Math.floor(seconds || 0));
+    return Math.floor(seconds / 60) + ':' + String(seconds % 60).padStart(2, '0');
+  }}
+
+  function setActiveScene(index) {{
+    scenes.forEach(function (scene, i) {{
+      scene.classList.toggle('active', i === index);
+    }});
+  }}
+
+  function resetReveals() {{
+    document.querySelectorAll('[data-reveal], .reveal-line').forEach(function (el) {{
+      el.classList.remove('is-visible');
+    }});
+  }}
+
+  function updateReveals(sceneIndex, currentTime) {{
+    var localMs = (currentTime - sceneStartTime(sceneIndex)) * 1000;
+    var scene = scenes[sceneIndex];
+    if (!scene) return;
+    scene.querySelectorAll('[data-reveal], .reveal-line').forEach(function (el) {{
+      var enterMs = parseFloat(el.getAttribute('data-enter-ms') || '0');
+      if (localMs >= enterMs) el.classList.add('is-visible');
+    }});
+  }}
+
+  function update() {{
+    if (!narration || !scenes.length) return;
+    var current = narration.currentTime || 0;
+    var idx = sceneIndexForTime(current);
+    if (idx !== lastSceneIndex) {{
+      lastSceneIndex = idx;
+      resetReveals();
+      setActiveScene(idx);
+    }}
+    updateReveals(idx, current);
+    if (progressBar && totalDuration > 0) {{
+      progressBar.style.width = Math.min(100, (current / totalDuration) * 100) + '%';
+    }}
+    if (timeEl) timeEl.textContent = format(current);
+  }}
+
+  if (narration) {{
+    narration.addEventListener('timeupdate', update);
+    narration.addEventListener('seeked', update);
+    narration.addEventListener('ended', update);
+  }}
+  if (playButton && narration) {{
+    playButton.addEventListener('click', function () {{
+      if (narration.paused) {{ narration.play(); playButton.textContent = 'Ⅱ'; }}
+      else {{ narration.pause(); playButton.textContent = '▶'; }}
+    }});
+  }}
+  setActiveScene(0);
+  update();
+}}());
+</script>
+"""
+
+
+def _ensure_motion(html: str) -> str:
+    """Inject shared motion CSS and audio-synced reveal handling."""
+    if "data-infodemica-motion" not in html:
+        css = _load_motion_css()
+        if css and "</head>" in html:
+            motion_style = f'<style data-infodemica-motion="true">\n{css}\n</style>'
+            html = html.replace("</head>", motion_style + "\n</head>", 1)
+
+    if "data-infodemica-reveals" not in html and "</body>" in html:
+        html = html.replace("</body>", _reveal_sync_script() + "</body>", 1)
+
+    return html
+
+
 def _ensure_contract(html: str) -> str:
     """Ensure Claude's HTML contains the placeholders needed for audio sync."""
     if PLACEHOLDER_TITLE not in html:
@@ -170,67 +372,13 @@ def _ensure_contract(html: str) -> str:
         PLACEHOLDER_SCENE_DURATIONS_JSON not in html
         or PLACEHOLDER_TOTAL_DURATION_JSON not in html
     ):
-        sync_script = f"""
-<script>
-(function () {{
-  var narration = document.getElementById('narration');
-  var scenes = Array.prototype.slice.call(document.querySelectorAll('.scene'));
-  var sceneDurations = {PLACEHOLDER_SCENE_DURATIONS_JSON};
-  var totalDuration = {PLACEHOLDER_TOTAL_DURATION_JSON};
-  var playButton = document.querySelector('[data-play-toggle]') || document.querySelector('.play-button') || document.querySelector('button');
-  var progressBar = document.querySelector('[data-progress-bar]') || document.querySelector('.progress-fill') || document.querySelector('.progress-bar');
-  var timeEl = document.querySelector('[data-time]');
-
-  function sceneIndexForTime(time) {{
-    var elapsed = 0;
-    for (var i = 0; i < sceneDurations.length; i += 1) {{
-      elapsed += Number(sceneDurations[i]) || 0;
-      if (time <= elapsed) return i;
-    }}
-    return Math.max(0, scenes.length - 1);
-  }}
-
-  function format(seconds) {{
-    seconds = Math.max(0, Math.floor(seconds || 0));
-    return Math.floor(seconds / 60) + ':' + String(seconds % 60).padStart(2, '0');
-  }}
-
-  function setActiveScene(index) {{
-    scenes.forEach(function (scene, i) {{
-      scene.classList.toggle('active', i === index);
-    }});
-  }}
-
-  function update() {{
-    if (!narration || !scenes.length) return;
-    var current = narration.currentTime || 0;
-    setActiveScene(sceneIndexForTime(current));
-    if (progressBar && totalDuration > 0) {{
-      progressBar.style.width = Math.min(100, (current / totalDuration) * 100) + '%';
-    }}
-    if (timeEl) timeEl.textContent = format(current);
-  }}
-
-  if (narration) {{
-    narration.addEventListener('timeupdate', update);
-    narration.addEventListener('ended', update);
-  }}
-  if (playButton && narration) {{
-    playButton.addEventListener('click', function () {{
-      if (narration.paused) {{ narration.play(); playButton.textContent = 'Ⅱ'; }}
-      else {{ narration.pause(); playButton.textContent = '▶'; }}
-    }});
-  }}
-  setActiveScene(0);
-  update();
-}}());
-</script>
-"""
+        sync_script = _fallback_sync_script()
         if "</body>" in html:
             html = html.replace("</body>", sync_script + "</body>", 1)
         else:
             html += sync_script
 
+    html = _ensure_motion(html)
     html = _ensure_visible_code_cleanup(html)
     return html
 

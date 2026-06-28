@@ -393,6 +393,11 @@ class ShippingControlsTests(TestCase):
         self.assertIn(PLACEHOLDER_AUDIO_SRC, html)
         self.assertIn(PLACEHOLDER_SCENE_DURATIONS_JSON, html)
         self.assertIn("timeupdate", html)
+        self.assertIn("data-infodemica-motion", html)
+        self.assertIn("orbDrift", html)
+        self.assertIn("[data-reveal]", html)
+        self.assertIn("updateReveals", html)
+        self.assertIn("resetReveals", html)
 
     @override_settings(MEDIA_ROOT=tempfile.gettempdir())
     def test_export_mp4_downloads_existing_file(self):

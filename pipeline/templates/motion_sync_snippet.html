@@ -1,0 +1,135 @@
+<!--
+  Audio-synced motion reference for Claude presentations.
+  Copy patterns — do NOT copy colors, copy, or exact layout.
+-->
+
+<!-- ── CSS: ambient + reveal + optional hero motion ── -->
+<style>
+@keyframes orbDrift {
+  0% { transform: translate(0, 0) scale(1); }
+  50% { transform: translate(24px, -32px) scale(1.08); }
+  100% { transform: translate(-16px, 18px) scale(0.96); }
+}
+@keyframes kenBurns {
+  from { transform: scale(1) translate(0, 0); }
+  to { transform: scale(1.06) translate(-1.5%, -1%); }
+}
+@keyframes gradientShift {
+  0% { background-position: 0% 50%; }
+  100% { background-position: 100% 50%; }
+}
+
+.ambient {
+  position: absolute;
+  inset: 0;
+  z-index: 0;
+  overflow: hidden;
+  pointer-events: none;
+}
+.ambient-orb {
+  position: absolute;
+  border-radius: 50%;
+  filter: blur(70px);
+  opacity: 0.32;
+  animation: orbDrift 18s ease-in-out infinite alternate;
+}
+.ken-burns img {
+  animation: kenBurns 9s ease-in-out infinite alternate;
+  transform-origin: center center;
+}
+
+[data-reveal], .reveal-line {
+  opacity: 0;
+  transform: translateY(22px);
+  transition:
+    opacity 0.55s cubic-bezier(0.16, 1, 0.3, 1),
+    transform 0.55s cubic-bezier(0.16, 1, 0.3, 1);
+}
+[data-reveal].is-visible, .reveal-line.is-visible {
+  opacity: 1;
+  transform: translateY(0);
+}
+</style>
+
+<!-- ── Example scene markup with phrase reveals ── -->
+<!--
+<section class="scene active" data-scene-index="1">
+  <div class="ambient" aria-hidden="true">
+    <div class="ambient-orb" style="width:260px;height:260px;top:-60px;right:-80px;background:radial-gradient(circle,rgba(255,107,53,0.28),transparent 70%);"></div>
+    <div class="ambient-orb" style="width:220px;height:220px;bottom:-40px;left:-60px;background:radial-gradient(circle,rgba(53,208,255,0.22),transparent 70%);animation-delay:-6s;"></div>
+  </div>
+  <h1 class="headline" data-reveal data-enter-ms="120">1.15 million tweets</h1>
+  <p class="subtext" data-reveal data-enter-ms="480">about statins were posted on Twitter</p>
+  <p class="subtext" data-reveal data-enter-ms="920">between 2010 and 2022</p>
+</section>
+-->
+
+<!-- ── JS: audio-synced scene + staggered reveals (NO setTimeout for scene advance) ── -->
+<script>
+(function () {
+  var narration = document.getElementById('narration');
+  var scenes = Array.prototype.slice.call(document.querySelectorAll('.scene'));
+  var sceneDurations = __SCENE_DURATIONS_JSON__;
+  var totalDuration = __TOTAL_DURATION_JSON__;
+  var lastSceneIndex = -1;
+
+  function sceneIndexForTime(time) {
+    var elapsed = 0;
+    for (var i = 0; i < sceneDurations.length; i += 1) {
+      elapsed += Number(sceneDurations[i]) || 0;
+      if (time <= elapsed) return i;
+    }
+    return Math.max(0, scenes.length - 1);
+  }
+
+  function sceneStartTime(index) {
+    var start = 0;
+    for (var i = 0; i < index; i += 1) {
+      start += Number(sceneDurations[i]) || 0;
+    }
+    return start;
+  }
+
+  function setActiveScene(index) {
+    scenes.forEach(function (scene, i) {
+      scene.classList.toggle('active', i === index);
+    });
+  }
+
+  function resetReveals() {
+    document.querySelectorAll('[data-reveal], .reveal-line').forEach(function (el) {
+      el.classList.remove('is-visible');
+    });
+  }
+
+  function updateReveals(sceneIndex, currentTime) {
+    var localMs = (currentTime - sceneStartTime(sceneIndex)) * 1000;
+    var scene = scenes[sceneIndex];
+    if (!scene) return;
+    scene.querySelectorAll('[data-reveal], .reveal-line').forEach(function (el) {
+      var enterMs = parseFloat(el.getAttribute('data-enter-ms') || '0');
+      if (localMs >= enterMs) el.classList.add('is-visible');
+    });
+  }
+
+  function update() {
+    if (!narration || !scenes.length) return;
+    var current = narration.currentTime || 0;
+    var idx = sceneIndexForTime(current);
+    if (idx !== lastSceneIndex) {
+      lastSceneIndex = idx;
+      resetReveals();
+      setActiveScene(idx);
+    }
+    updateReveals(idx, current);
+  }
+
+  if (narration) {
+    narration.addEventListener('timeupdate', update);
+    narration.addEventListener('seeked', update);
+    narration.addEventListener('ended', update);
+  }
+  setActiveScene(0);
+  update();
+})();
+</script>

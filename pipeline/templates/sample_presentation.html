@@ -1,0 +1,1282 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Statin Twitter Reel</title>
+<link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;600;800;900&family=JetBrains+Mono:wght@500;700&display=swap" rel="stylesheet">
+<style>
+* { margin: 0; padding: 0; box-sizing: border-box; }
+
+body {
+  background: #050505;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 100vh;
+  font-family: 'Outfit', sans-serif;
+  overflow: hidden;
+}
+
+.phone-frame {
+  width: 375px;
+  height: 812px;
+  border-radius: 44px;
+  border: 3px solid #1a1a1a;
+  overflow: hidden;
+  position: relative;
+  background: #000;
+  box-shadow: 0 40px 100px rgba(0,0,0,0.6);
+}
+
+.reel {
+  width: 100%;
+  height: 100%;
+  position: relative;
+  overflow: hidden;
+  cursor: pointer;
+}
+
+/* ── GLOBAL SCENE SYSTEM ── */
+.scene {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  padding: 48px 30px;
+  opacity: 0;
+  visibility: hidden;
+  will-change: opacity, transform;
+}
+.scene.active {
+  opacity: 1;
+  visibility: visible;
+}
+
+/* Crossfade transition layer */
+.scene-bg {
+  position: absolute;
+  inset: 0;
+  z-index: 0;
+  transition: opacity 0.8s ease;
+}
+.scene > * { position: relative; z-index: 1; }
+
+/* ── AMBIENT BACKGROUND ── */
+.ambient {
+  position: absolute;
+  inset: 0;
+  z-index: 0;
+  overflow: hidden;
+}
+.ambient-orb {
+  position: absolute;
+  border-radius: 50%;
+  filter: blur(80px);
+  opacity: 0.35;
+  animation: orbDrift 20s ease-in-out infinite alternate;
+}
+@keyframes orbDrift {
+  0% { transform: translate(0, 0) scale(1); }
+  33% { transform: translate(30px, -40px) scale(1.15); }
+  66% { transform: translate(-20px, 30px) scale(0.9); }
+  100% { transform: translate(10px, -10px) scale(1.05); }
+}
+
+/* ── TYPOGRAPHY ── */
+.headline {
+  font-weight: 900;
+  font-size: 46px;
+  line-height: 1.0;
+  letter-spacing: -1.5px;
+  color: #fff;
+  text-align: center;
+}
+.subtext {
+  font-weight: 300;
+  font-size: 15px;
+  color: rgba(255,255,255,0.5);
+  text-align: center;
+  line-height: 1.6;
+}
+.accent-warm { color: #FF6B35; }
+.accent-cool { color: #35D0FF; }
+.accent-red { color: #FF3355; }
+.accent-gold { color: #FFD166; }
+
+/* ── SCENE ENTRANCE ANIMATIONS ── */
+@keyframes fadeUp {
+  from { opacity: 0; transform: translateY(30px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+@keyframes fadeIn {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+@keyframes scaleIn {
+  from { opacity: 0; transform: scale(0.85); }
+  to { opacity: 1; transform: scale(1); }
+}
+@keyframes slideLeft {
+  from { opacity: 0; transform: translateX(40px); }
+  to { opacity: 1; transform: translateX(0); }
+}
+@keyframes slideRight {
+  from { opacity: 0; transform: translateX(-40px); }
+  to { opacity: 1; transform: translateX(0); }
+}
+@keyframes drawLine {
+  from { stroke-dashoffset: var(--line-length); }
+  to { stroke-dashoffset: 0; }
+}
+
+.anim-fade-up {
+  opacity: 0;
+  animation: fadeUp 0.7s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+}
+.anim-fade-in {
+  opacity: 0;
+  animation: fadeIn 0.6s ease forwards;
+}
+.anim-scale-in {
+  opacity: 0;
+  animation: scaleIn 0.6s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+}
+
+/* ── SCENE 1: HOOK ── */
+.s1-pill {
+  width: 64px;
+  height: 64px;
+  border-radius: 50%;
+  background: linear-gradient(135deg, #FF6B35, #FF3355);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 32px;
+  margin-bottom: 28px;
+  box-shadow: 0 0 60px rgba(255,107,53,0.3);
+}
+.s1-vs {
+  font-weight: 300;
+  font-size: 14px;
+  color: rgba(255,255,255,0.35);
+  text-transform: uppercase;
+  letter-spacing: 6px;
+  margin: 16px 0;
+}
+
+/* ── SCENE 2: SCALE ── */
+.counter-wrap {
+  display: flex;
+  align-items: baseline;
+  gap: 0;
+  overflow: hidden;
+}
+.counter-digit-col {
+  height: 90px;
+  overflow: hidden;
+  position: relative;
+}
+.counter-digit-strip {
+  display: flex;
+  flex-direction: column;
+  position: absolute;
+  top: 0;
+  left: 0;
+  transition: transform 2s cubic-bezier(0.16, 1, 0.3, 1);
+}
+.counter-digit {
+  font-family: 'JetBrains Mono', monospace;
+  font-weight: 700;
+  font-size: 72px;
+  line-height: 90px;
+  color: #35D0FF;
+  text-align: center;
+  width: 46px;
+}
+.counter-comma {
+  font-family: 'JetBrains Mono', monospace;
+  font-weight: 700;
+  font-size: 72px;
+  line-height: 90px;
+  color: rgba(53,208,255,0.4);
+  width: 20px;
+  text-align: center;
+}
+.counter-label {
+  font-size: 16px;
+  color: rgba(255,255,255,0.6);
+  margin-top: 12px;
+  font-weight: 400;
+}
+.s2-meta {
+  display: flex;
+  gap: 32px;
+  margin-top: 44px;
+}
+.s2-meta-item {
+  text-align: center;
+}
+.s2-meta-val {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 26px;
+  font-weight: 700;
+  color: rgba(53,208,255,0.7);
+}
+.s2-meta-label {
+  font-size: 11px;
+  color: rgba(255,255,255,0.3);
+  margin-top: 4px;
+  text-transform: uppercase;
+  letter-spacing: 1px;
+}
+
+/* ── SCENE 3: BOT VS HUMAN ── */
+.s3-wrap {
+  width: 100%;
+}
+.s3-title {
+  font-weight: 800;
+  font-size: 24px;
+  color: #fff;
+  text-align: center;
+  margin-bottom: 32px;
+  letter-spacing: -0.5px;
+}
+.era-row {
+  display: flex;
+  align-items: center;
+  margin-bottom: 20px;
+  gap: 12px;
+}
+.era-label {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 11px;
+  color: rgba(255,255,255,0.4);
+  width: 68px;
+  flex-shrink: 0;
+  text-align: right;
+}
+.era-bar-track {
+  flex: 1;
+  height: 32px;
+  background: rgba(255,255,255,0.04);
+  border-radius: 8px;
+  overflow: hidden;
+  display: flex;
+  position: relative;
+}
+.era-bar-bot, .era-bar-human {
+  height: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 10px;
+  font-weight: 600;
+  overflow: hidden;
+  white-space: nowrap;
+  width: 0;
+  transition: width 1.4s cubic-bezier(0.16, 1, 0.3, 1);
+}
+.era-bar-bot {
+  background: linear-gradient(90deg, #FF3355, #FF6B6B);
+  color: #fff;
+  border-radius: 8px 0 0 8px;
+}
+.era-bar-human {
+  background: linear-gradient(90deg, #35D0FF, #35FFB0);
+  color: #000;
+  border-radius: 0 8px 8px 0;
+}
+.s3-legend {
+  display: flex;
+  gap: 24px;
+  justify-content: center;
+  margin-top: 24px;
+}
+.s3-legend-item {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  color: rgba(255,255,255,0.5);
+}
+.s3-legend-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+}
+.s3-insight {
+  margin-top: 28px;
+  text-align: center;
+  font-size: 15px;
+  color: rgba(255,255,255,0.6);
+  line-height: 1.6;
+}
+.s3-insight strong {
+  color: #35D0FF;
+  font-weight: 600;
+}
+
+/* ── SCENE 4: NEGATIVITY ── */
+.s4-wrap {
+  width: 100%;
+}
+.s4-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 14px;
+  border-radius: 20px;
+  background: rgba(255,51,85,0.12);
+  border: 1px solid rgba(255,51,85,0.2);
+  font-size: 12px;
+  font-weight: 600;
+  color: #FF3355;
+  margin-bottom: 16px;
+  text-transform: uppercase;
+  letter-spacing: 1px;
+}
+.s4-chart {
+  width: 100%;
+  height: 220px;
+  margin: 20px 0;
+}
+.s4-chart svg { width: 100%; height: 100%; }
+
+.s4-stats {
+  display: flex;
+  gap: 16px;
+  width: 100%;
+}
+.s4-stat {
+  flex: 1;
+  background: rgba(255,255,255,0.03);
+  border: 1px solid rgba(255,255,255,0.06);
+  border-radius: 14px;
+  padding: 16px;
+  text-align: center;
+  opacity: 0;
+  transform: translateY(16px);
+}
+.s4-stat.show {
+  opacity: 1;
+  transform: translateY(0);
+  transition: all 0.6s cubic-bezier(0.16, 1, 0.3, 1);
+}
+.s4-stat-val {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 32px;
+  font-weight: 700;
+  color: #FF3355;
+}
+.s4-stat-label {
+  font-size: 11px;
+  color: rgba(255,255,255,0.4);
+  margin-top: 4px;
+  line-height: 1.4;
+}
+.s4-arrow {
+  font-size: 24px;
+  align-self: center;
+  color: rgba(255,255,255,0.2);
+  flex-shrink: 0;
+  opacity: 0;
+}
+.s4-arrow.show {
+  opacity: 1;
+  transition: opacity 0.4s ease 0.4s;
+}
+
+/* ── SCENE 5: TWEETS ── */
+.s5-wrap {
+  width: 100%;
+}
+.tweet-card {
+  background: rgba(255,255,255,0.03);
+  border: 1px solid rgba(255,255,255,0.06);
+  border-radius: 16px;
+  padding: 18px 16px;
+  margin-bottom: 14px;
+  opacity: 0;
+  transform: translateY(24px);
+}
+.tweet-card.show {
+  opacity: 1;
+  transform: translateY(0);
+  transition: all 0.7s cubic-bezier(0.16, 1, 0.3, 1);
+}
+.tc-header {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 10px;
+}
+.tc-avatar {
+  width: 30px;
+  height: 30px;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 14px;
+  flex-shrink: 0;
+}
+.tc-name {
+  font-size: 13px;
+  font-weight: 600;
+  color: rgba(255,255,255,0.8);
+}
+.tc-tag {
+  font-size: 9px;
+  font-weight: 700;
+  padding: 2px 7px;
+  border-radius: 4px;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  margin-left: auto;
+}
+.tc-tag-bot { background: rgba(255,51,85,0.15); color: #FF3355; }
+.tc-tag-human { background: rgba(53,208,255,0.15); color: #35D0FF; }
+.tc-body {
+  font-size: 13px;
+  color: rgba(255,255,255,0.6);
+  line-height: 1.55;
+  font-style: italic;
+}
+.tc-stat {
+  margin-top: 10px;
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 11px;
+  color: rgba(255,255,255,0.3);
+}
+.tc-stat span { color: #FF3355; font-weight: 700; }
+
+/* ── SCENE 6: ENGAGEMENT ── */
+.s6-ring {
+  width: 160px;
+  height: 160px;
+  position: relative;
+  margin-bottom: 28px;
+}
+.s6-ring svg {
+  width: 100%;
+  height: 100%;
+  transform: rotate(-90deg);
+}
+.s6-ring-bg {
+  fill: none;
+  stroke: rgba(255,255,255,0.06);
+  stroke-width: 8;
+}
+.s6-ring-fill {
+  fill: none;
+  stroke: #FFD166;
+  stroke-width: 8;
+  stroke-linecap: round;
+  stroke-dasharray: 440;
+  stroke-dashoffset: 440;
+  transition: stroke-dashoffset 1.8s cubic-bezier(0.16, 1, 0.3, 1);
+  filter: drop-shadow(0 0 12px rgba(255,209,102,0.4));
+}
+.s6-ring-label {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+}
+.s6-ring-num {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 42px;
+  font-weight: 700;
+  color: #FFD166;
+}
+.s6-ring-text {
+  font-size: 11px;
+  color: rgba(255,255,255,0.4);
+  text-transform: uppercase;
+  letter-spacing: 1px;
+}
+.s6-msg {
+  font-size: 17px;
+  color: rgba(255,255,255,0.75);
+  text-align: center;
+  line-height: 1.6;
+  max-width: 280px;
+}
+.s6-msg strong { color: #FFD166; font-weight: 700; }
+
+/* ── SCENE 7: TAKEAWAY ── */
+.s7-wrap {
+  width: 100%;
+}
+.s7-point {
+  display: flex;
+  align-items: flex-start;
+  gap: 14px;
+  margin-bottom: 22px;
+  opacity: 0;
+  transform: translateX(-24px);
+}
+.s7-point.show {
+  opacity: 1;
+  transform: translateX(0);
+  transition: all 0.6s cubic-bezier(0.16, 1, 0.3, 1);
+}
+.s7-icon {
+  width: 40px;
+  height: 40px;
+  border-radius: 12px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 20px;
+  flex-shrink: 0;
+}
+.s7-text {
+  font-size: 15px;
+  color: rgba(255,255,255,0.75);
+  line-height: 1.55;
+}
+.s7-text strong {
+  font-weight: 700;
+}
+
+/* ── SCENE 8: CTA ── */
+.s8-journal {
+  font-size: 11px;
+  color: rgba(255,255,255,0.25);
+  text-transform: uppercase;
+  letter-spacing: 3px;
+  margin-bottom: 20px;
+}
+.s8-title {
+  font-weight: 800;
+  font-size: 22px;
+  color: #fff;
+  text-align: center;
+  line-height: 1.25;
+  letter-spacing: -0.3px;
+  margin-bottom: 8px;
+}
+.s8-authors {
+  font-size: 12px;
+  color: rgba(255,255,255,0.3);
+  text-align: center;
+  margin-bottom: 28px;
+}
+.s8-divider {
+  width: 40px;
+  height: 2px;
+  background: rgba(255,255,255,0.1);
+  margin-bottom: 28px;
+}
+.s8-bottom {
+  font-size: 14px;
+  color: rgba(255,255,255,0.5);
+  text-align: center;
+  line-height: 1.7;
+}
+.s8-bottom strong {
+  color: #fff;
+  font-weight: 600;
+}
+.s8-save {
+  margin-top: 28px;
+  padding: 12px 32px;
+  border-radius: 30px;
+  background: linear-gradient(135deg, #FF6B35, #FF3355);
+  color: #fff;
+  font-weight: 700;
+  font-size: 14px;
+  letter-spacing: 0.5px;
+  box-shadow: 0 8px 30px rgba(255,51,85,0.25);
+  animation: softPulse 2.5s ease-in-out infinite;
+}
+@keyframes softPulse {
+  0%, 100% { box-shadow: 0 8px 30px rgba(255,51,85,0.25); transform: scale(1); }
+  50% { box-shadow: 0 12px 40px rgba(255,51,85,0.35); transform: scale(1.03); }
+}
+
+/* ── TIMELINE BAR ── */
+.timeline {
+  position: absolute;
+  top: 14px;
+  left: 16px;
+  right: 16px;
+  display: flex;
+  gap: 4px;
+  z-index: 100;
+}
+.tl-seg {
+  flex: 1;
+  height: 2.5px;
+  background: rgba(255,255,255,0.15);
+  border-radius: 2px;
+  overflow: hidden;
+}
+.tl-fill {
+  height: 100%;
+  width: 0%;
+  background: #fff;
+  border-radius: 2px;
+}
+.tl-seg.done .tl-fill { width: 100%; transition: none; }
+.tl-seg.active .tl-fill { width: 100%; }
+
+/* ── PLAY OVERLAY ── */
+.overlay {
+  position: absolute;
+  inset: 0;
+  z-index: 200;
+  background: rgba(0,0,0,0.6);
+  backdrop-filter: blur(12px);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  transition: opacity 0.4s ease;
+}
+.overlay.gone {
+  opacity: 0;
+  pointer-events: none;
+}
+.play-circle {
+  width: 72px;
+  height: 72px;
+  border-radius: 50%;
+  border: 2px solid rgba(255,255,255,0.3);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: transform 0.2s, border-color 0.2s;
+}
+.play-circle:hover {
+  transform: scale(1.08);
+  border-color: rgba(255,255,255,0.6);
+}
+.play-circle svg { fill: #fff; margin-left: 3px; }
+.overlay-label {
+  font-size: 12px;
+  color: rgba(255,255,255,0.4);
+  margin-top: 14px;
+  text-transform: uppercase;
+  letter-spacing: 3px;
+}
+
+/* ── NAV ZONES ── */
+.nav-left, .nav-right {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  z-index: 50;
+  cursor: pointer;
+}
+.nav-left { left: 0; width: 30%; }
+.nav-right { right: 0; width: 70%; }
+
+/* ── RESPONSIVE ── */
+@media (max-width: 420px) {
+  .phone-frame {
+    width: 100vw;
+    height: 100vh;
+    border-radius: 0;
+    border: none;
+  }
+}
+</style>
+</head>
+<body>
+
+<div class="phone-frame">
+<div class="reel" id="reel">
+
+  <!-- Ambient background -->
+  <div class="ambient" id="ambient">
+    <div class="ambient-orb" style="width:300px;height:300px;top:-80px;right:-100px;background:radial-gradient(circle,rgba(255,107,53,0.25),transparent 70%);"></div>
+    <div class="ambient-orb" style="width:250px;height:250px;bottom:-60px;left:-80px;background:radial-gradient(circle,rgba(53,208,255,0.2),transparent 70%);animation-delay:-7s;"></div>
+    <div class="ambient-orb" style="width:200px;height:200px;top:40%;left:50%;transform:translateX(-50%);background:radial-gradient(circle,rgba(255,51,85,0.15),transparent 70%);animation-delay:-14s;"></div>
+  </div>
+
+  <!-- Timeline -->
+  <div class="timeline" id="timeline"></div>
+
+  <!-- Play overlay -->
+  <div class="overlay" id="overlay">
+    <div class="play-circle"><svg width="24" height="28" viewBox="0 0 24 28"><polygon points="2,0 24,14 2,28"/></svg></div>
+    <div class="overlay-label">Tap to watch</div>
+  </div>
+
+  <!-- Nav -->
+  <div class="nav-left" id="navL"></div>
+  <div class="nav-right" id="navR"></div>
+
+  <!-- ═══════ SCENE 1 ═══════ -->
+  <div class="scene" id="sc1" data-dur="4500">
+    <div class="s1-pill" style="--d:0s">💊</div>
+    <div class="headline" style="--d:0.15s">
+      YOUR DOCTOR<br>SAYS <span class="accent-cool">TAKE IT.</span>
+    </div>
+    <div class="s1-vs" style="--d:0.4s">vs</div>
+    <div class="headline" style="--d:0.5s; font-size:40px;">
+      TWITTER SAYS<br><span class="accent-red">DON'T.</span>
+    </div>
+    <div class="subtext" style="margin-top:24px; --d:0.7s">Who's winning the statin debate?</div>
+  </div>
+
+  <!-- ═══════ SCENE 2 ═══════ -->
+  <div class="scene" id="sc2" data-dur="4500">
+    <div class="subtext" style="margin-bottom:20px; text-transform:uppercase; letter-spacing:3px; font-size:11px;">Researchers analyzed</div>
+    <div class="counter-wrap" id="counterWrap"></div>
+    <div class="counter-label">statin-related tweets</div>
+    <div class="s2-meta">
+      <div class="s2-meta-item">
+        <div class="s2-meta-val" id="metaAccounts">0</div>
+        <div class="s2-meta-label">accounts</div>
+      </div>
+      <div class="s2-meta-item">
+        <div class="s2-meta-val">13 yrs</div>
+        <div class="s2-meta-label">of data</div>
+      </div>
+      <div class="s2-meta-item">
+        <div class="s2-meta-val">2010–22</div>
+        <div class="s2-meta-label">period</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ═══════ SCENE 3 ═══════ -->
+  <div class="scene" id="sc3" data-dur="5500">
+    <div class="s3-wrap">
+      <div class="s3-title">Who's posting about statins?</div>
+      <div class="era-row">
+        <div class="era-label">2010–12</div>
+        <div class="era-bar-track">
+          <div class="era-bar-bot" id="b1b">48%</div>
+          <div class="era-bar-human" id="b1h">44%</div>
+        </div>
+      </div>
+      <div class="era-row">
+        <div class="era-label">2013–16</div>
+        <div class="era-bar-track">
+          <div class="era-bar-bot" id="b2b">27%</div>
+          <div class="era-bar-human" id="b2h">60%</div>
+        </div>
+      </div>
+      <div class="era-row">
+        <div class="era-label">2017–22</div>
+        <div class="era-bar-track">
+          <div class="era-bar-bot" id="b3b">11%</div>
+          <div class="era-bar-human" id="b3h">80%</div>
+        </div>
+      </div>
+      <div class="s3-legend">
+        <div class="s3-legend-item"><div class="s3-legend-dot" style="background:#FF3355;"></div>Bots</div>
+        <div class="s3-legend-item"><div class="s3-legend-dot" style="background:#35D0FF;"></div>Humans</div>
+      </div>
+      <div class="s3-insight">Humans overtook bots as the<br><strong>primary source of statin content</strong></div>
+    </div>
+  </div>
+
+  <!-- ═══════ SCENE 4 ═══════ -->
+  <div class="scene" id="sc4" data-dur="5500">
+    <div class="s4-wrap">
+      <div style="text-align:center;">
+        <div class="s4-badge">📉 Trending negative</div>
+      </div>
+      <div class="headline" style="font-size:32px; margin-bottom:4px;">Negativity is<br><span class="accent-red">rising.</span></div>
+      <div class="subtext" style="margin-bottom:8px; font-size:12px;">% of tweets with negative sentiment over time</div>
+      <div class="s4-chart">
+        <svg viewBox="0 0 320 190" id="negSvg">
+          <defs>
+            <linearGradient id="grdNeg" x1="0" y1="0" x2="0" y2="1">
+              <stop offset="0%" stop-color="#FF3355" stop-opacity="0.3"/>
+              <stop offset="100%" stop-color="#FF3355" stop-opacity="0"/>
+            </linearGradient>
+          </defs>
+          <!-- Y axis labels -->
+          <text x="32" y="158" fill="rgba(255,255,255,0.2)" font-size="9" font-family="JetBrains Mono" text-anchor="end">20%</text>
+          <text x="32" y="108" fill="rgba(255,255,255,0.2)" font-size="9" font-family="JetBrains Mono" text-anchor="end">30%</text>
+          <text x="32" y="58" fill="rgba(255,255,255,0.2)" font-size="9" font-family="JetBrains Mono" text-anchor="end">40%</text>
+          <!-- Grid -->
+          <line x1="40" y1="155" x2="305" y2="155" stroke="rgba(255,255,255,0.05)" stroke-width="1"/>
+          <line x1="40" y1="105" x2="305" y2="105" stroke="rgba(255,255,255,0.05)" stroke-width="1" stroke-dasharray="3"/>
+          <line x1="40" y1="55" x2="305" y2="55" stroke="rgba(255,255,255,0.05)" stroke-width="1" stroke-dasharray="3"/>
+          <!-- X axis -->
+          <text x="60" y="178" fill="rgba(255,255,255,0.25)" font-size="9" font-family="JetBrains Mono" text-anchor="middle">2010</text>
+          <text x="142" y="178" fill="rgba(255,255,255,0.25)" font-size="9" font-family="JetBrains Mono" text-anchor="middle">2013</text>
+          <text x="222" y="178" fill="rgba(255,255,255,0.25)" font-size="9" font-family="JetBrains Mono" text-anchor="middle">2017</text>
+          <text x="290" y="178" fill="rgba(255,255,255,0.25)" font-size="9" font-family="JetBrains Mono" text-anchor="middle">2022</text>
+          <!-- Area -->
+          <path id="negArea" d="" fill="url(#grdNeg)" opacity="0"/>
+          <!-- Line -->
+          <path id="negLine" d="" fill="none" stroke="#FF3355" stroke-width="2.5" stroke-linecap="round"/>
+          <!-- Glow line -->
+          <path id="negGlow" d="" fill="none" stroke="#FF3355" stroke-width="6" stroke-linecap="round" opacity="0.15" filter="blur(4px)"/>
+          <!-- Dots -->
+          <circle id="nd1" cx="60" cy="118" r="0" fill="#FF3355"/>
+          <circle id="nd2" cx="142" cy="88" r="0" fill="#FF3355"/>
+          <circle id="nd3" cx="222" cy="70" r="0" fill="#FF3355"/>
+          <circle id="nd4" cx="290" cy="60" r="0" fill="#FF3355"/>
+          <!-- Dot labels -->
+          <text id="nl1" x="60" y="134" fill="#FF3355" font-size="10" font-family="JetBrains Mono" font-weight="700" text-anchor="middle" opacity="0">29%</text>
+          <text id="nl2" x="142" y="82" fill="#FF3355" font-size="10" font-family="JetBrains Mono" font-weight="700" text-anchor="middle" opacity="0">35%</text>
+          <text id="nl3" x="222" y="64" fill="rgba(255,51,85,0.5)" font-size="9" font-family="JetBrains Mono" text-anchor="middle" opacity="0">38%</text>
+          <text id="nl4" x="290" y="52" fill="#FF3355" font-size="11" font-family="JetBrains Mono" font-weight="700" text-anchor="middle" opacity="0">39%</text>
+        </svg>
+      </div>
+      <div class="s4-stats">
+        <div class="s4-stat" id="s4s1">
+          <div class="s4-stat-val">29%</div>
+          <div class="s4-stat-label">early period<br>2010–2012</div>
+        </div>
+        <div class="s4-arrow" id="s4arrow">→</div>
+        <div class="s4-stat" id="s4s2">
+          <div class="s4-stat-val">39%</div>
+          <div class="s4-stat-label">latest period<br>2017–2022</div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ═══════ SCENE 5 ═══════ -->
+  <div class="scene" id="sc5" data-dur="5500">
+    <div class="s5-wrap">
+      <div class="headline" style="font-size:28px; margin-bottom:6px;">Statin Skepticism<br><span class="accent-red">is Growing</span></div>
+      <div class="subtext" style="margin-bottom:20px; font-size:12px;">Real tweets from the study</div>
+
+      <div class="tweet-card" id="tw1">
+        <div class="tc-header">
+          <div class="tc-avatar" style="background:rgba(255,51,85,0.12);">🤖</div>
+          <div class="tc-name">Bot Account</div>
+          <div class="tc-tag tc-tag-bot">Bot</div>
+        </div>
+        <div class="tc-body">"Your doctor will prescribe you statins, but these 35 sentences will prescribe you truth…"</div>
+        <div class="tc-stat">Skepticism: <span>8% → 19%</span> over study period</div>
+      </div>
+
+      <div class="tweet-card" id="tw2">
+        <div class="tc-header">
+          <div class="tc-avatar" style="background:rgba(53,208,255,0.12);">👤</div>
+          <div class="tc-name">Human Account</div>
+          <div class="tc-tag tc-tag-human">Human</div>
+        </div>
+        <div class="tc-body">"Avoid STATINS. Cholesterol is the building block for sex hormones. The more you swallow statins, the more you weaken…"</div>
+        <div class="tc-stat">Skepticism: <span>26% → 40%</span> over study period</div>
+      </div>
+
+      <div class="subtext" style="font-size:11px; margin-top:12px;">Despite strong clinical evidence for statin safety</div>
+    </div>
+  </div>
+
+  <!-- ═══════ SCENE 6 ═══════ -->
+  <div class="scene" id="sc6" data-dur="4500">
+    <div class="s6-ring">
+      <svg viewBox="0 0 160 160">
+        <circle class="s6-ring-bg" cx="80" cy="80" r="70"/>
+        <circle class="s6-ring-fill" id="ringFill" cx="80" cy="80" r="70"/>
+      </svg>
+      <div class="s6-ring-label">
+        <div class="s6-ring-num" id="ringNum">0%</div>
+        <div class="s6-ring-text">more reach</div>
+      </div>
+    </div>
+    <div class="s6-msg">
+      <strong>Negative tweets</strong> get significantly more engagement than positive ones
+    </div>
+    <div class="subtext" style="margin-top:20px; font-size:12px; max-width:260px;">Misinformation spreads farther and faster on social media</div>
+  </div>
+
+  <!-- ═══════ SCENE 7 ═══════ -->
+  <div class="scene" id="sc7" data-dur="5500">
+    <div class="s7-wrap">
+      <div class="headline" style="font-size:30px; margin-bottom:28px; text-align:left;">
+        So what does<br>this <span class="accent-gold">mean?</span>
+      </div>
+      <div class="s7-point" id="pt1">
+        <div class="s7-icon" style="background:rgba(53,208,255,0.1);">🔬</div>
+        <div class="s7-text">Statins are among the <strong class="accent-cool">most proven</strong> medications in all of medicine</div>
+      </div>
+      <div class="s7-point" id="pt2">
+        <div class="s7-icon" style="background:rgba(255,51,85,0.1);">📱</div>
+        <div class="s7-text">Online skepticism is <strong class="accent-red">rising fast</strong> — and it's mostly real people, not bots</div>
+      </div>
+      <div class="s7-point" id="pt3">
+        <div class="s7-icon" style="background:rgba(255,209,102,0.1);">💬</div>
+        <div class="s7-text">Social media is now a <strong class="accent-gold">critical battleground</strong> for health misinformation</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ═══════ SCENE 8 ═══════ -->
+  <div class="scene" id="sc8" data-dur="6000">
+    <div class="s8-journal">Published Research</div>
+    <div class="s8-title">Statin Twitter: Human and<br>Automated Bot Contributions,<br>2010 to 2022</div>
+    <div class="s8-authors">Slavin, Berman, Beam, Navar & Mittleman</div>
+    <div class="subtext" style="font-size:12px; color:rgba(53,208,255,0.6); margin-bottom:24px;">J Am Heart Assoc. 2024</div>
+    <div class="s8-divider"></div>
+    <div class="s8-bottom">
+      Talk to your doctor before<br>making medication decisions.<br><strong>Don't let Twitter be your doctor.</strong>
+    </div>
+    <div class="s8-save">❤️ Save & Share</div>
+  </div>
+
+</div>
+</div>
+
+<script>
+// ── CONFIG ──
+const SCENES = 8;
+let cur = -1;
+let playing = false;
+let timer = null;
+
+// ── BUILD TIMELINE ──
+const tl = document.getElementById('timeline');
+for (let i = 0; i < SCENES; i++) {
+  const s = document.createElement('div');
+  s.className = 'tl-seg';
+  s.innerHTML = '<div class="tl-fill"></div>';
+  tl.appendChild(s);
+}
+
+// ── ROLLING COUNTER BUILDER ──
+function buildCounter(target) {
+  const wrap = document.getElementById('counterWrap');
+  wrap.innerHTML = '';
+  const str = '1,155,735';
+  str.split('').forEach((ch, i) => {
+    if (ch === ',') {
+      const comma = document.createElement('div');
+      comma.className = 'counter-comma';
+      comma.textContent = ',';
+      wrap.appendChild(comma);
+    } else {
+      const col = document.createElement('div');
+      col.className = 'counter-digit-col';
+      const strip = document.createElement('div');
+      strip.className = 'counter-digit-strip';
+      strip.dataset.target = ch;
+      strip.dataset.idx = i;
+      // Build digits 0-9
+      for (let d = 0; d <= 9; d++) {
+        const digit = document.createElement('div');
+        digit.className = 'counter-digit';
+        digit.textContent = d;
+        strip.appendChild(digit);
+      }
+      col.appendChild(strip);
+      wrap.appendChild(col);
+    }
+  });
+}
+buildCounter();
+
+function animateCounter() {
+  const strips = document.querySelectorAll('.counter-digit-strip');
+  strips.forEach((strip, i) => {
+    const target = parseInt(strip.dataset.target);
+    const delay = i * 80;
+    strip.style.transform = 'translateY(0)';
+    setTimeout(() => {
+      strip.style.transform = `translateY(${-target * 90}px)`;
+    }, 200 + delay);
+  });
+}
+
+function resetCounter() {
+  document.querySelectorAll('.counter-digit-strip').forEach(s => {
+    s.style.transition = 'none';
+    s.style.transform = 'translateY(0)';
+    requestAnimationFrame(() => {
+      s.style.transition = 'transform 2s cubic-bezier(0.16, 1, 0.3, 1)';
+    });
+  });
+}
+
+// ── ANIMATED NUMBER ──
+function animateValue(el, start, end, duration, suffix) {
+  let startTime = null;
+  const step = (ts) => {
+    if (!startTime) startTime = ts;
+    const progress = Math.min((ts - startTime) / duration, 1);
+    const eased = 1 - Math.pow(1 - progress, 3);
+    const val = Math.floor(eased * (end - start) + start);
+    el.textContent = val.toLocaleString() + (suffix || '');
+    if (progress < 1) requestAnimationFrame(step);
+  };
+  requestAnimationFrame(step);
+}
+
+// ── SCENE TRANSITIONS ──
+function goTo(idx) {
+  if (idx < 0 || idx >= SCENES || idx === cur) return;
+  clearTimeout(timer);
+
+  const prev = cur;
+  cur = idx;
+
+  // Update timeline
+  document.querySelectorAll('.tl-seg').forEach((seg, i) => {
+    const fill = seg.querySelector('.tl-fill');
+    seg.classList.remove('done', 'active');
+    fill.style.transition = 'none';
+    fill.style.width = '0%';
+    if (i < cur) {
+      seg.classList.add('done');
+      fill.style.width = '100%';
+    } else if (i === cur) {
+      seg.classList.add('active');
+      const dur = getSceneDur(cur);
+      requestAnimationFrame(() => {
+        fill.style.transition = `width ${dur}ms linear`;
+        fill.style.width = '100%';
+      });
+    }
+  });
+
+  // Crossfade scenes
+  const scenes = document.querySelectorAll('.scene');
+  scenes.forEach((sc, i) => {
+    if (i === cur) {
+      sc.style.transition = 'opacity 0.6s ease, transform 0.6s cubic-bezier(0.16, 1, 0.3, 1)';
+      sc.style.opacity = '0';
+      sc.style.transform = 'scale(0.97) translateY(12px)';
+      sc.classList.add('active');
+      requestAnimationFrame(() => {
+        requestAnimationFrame(() => {
+          sc.style.opacity = '1';
+          sc.style.transform = 'scale(1) translateY(0)';
+        });
+      });
+    } else if (i === prev) {
+      sc.style.transition = 'opacity 0.5s ease, transform 0.5s ease';
+      sc.style.opacity = '0';
+      sc.style.transform = 'scale(1.02) translateY(-8px)';
+      setTimeout(() => {
+        sc.classList.remove('active');
+        sc.style.transform = '';
+      }, 500);
+    } else {
+      sc.classList.remove('active');
+      sc.style.opacity = '0';
+    }
+  });
+
+  // Shift ambient orbs
+  const orbs = document.querySelectorAll('.ambient-orb');
+  const hues = [
+    ['rgba(255,107,53,0.25)', 'rgba(53,208,255,0.2)'],
+    ['rgba(53,208,255,0.3)', 'rgba(53,255,176,0.15)'],
+    ['rgba(255,51,85,0.25)', 'rgba(53,208,255,0.2)'],
+    ['rgba(255,51,85,0.3)', 'rgba(255,51,85,0.15)'],
+    ['rgba(255,51,85,0.2)', 'rgba(53,208,255,0.2)'],
+    ['rgba(255,209,102,0.3)', 'rgba(255,107,53,0.15)'],
+    ['rgba(255,209,102,0.2)', 'rgba(53,208,255,0.2)'],
+    ['rgba(255,107,53,0.2)', 'rgba(53,208,255,0.15)'],
+  ];
+  if (orbs[0]) orbs[0].style.background = `radial-gradient(circle,${hues[cur][0]},transparent 70%)`;
+  if (orbs[1]) orbs[1].style.background = `radial-gradient(circle,${hues[cur][1]},transparent 70%)`;
+  orbs.forEach(o => o.style.transition = 'background 1.2s ease');
+
+  // Trigger scene-specific anims
+  triggerAnim(cur);
+
+  // Auto advance
+  if (playing) {
+    timer = setTimeout(() => {
+      if (cur < SCENES - 1) goTo(cur + 1);
+      else playing = false;
+    }, getSceneDur(cur));
+  }
+}
+
+function getSceneDur(idx) {
+  const sc = document.querySelectorAll('.scene')[idx];
+  return parseInt(sc?.dataset.dur) || 4000;
+}
+
+// ── SCENE ANIMATIONS ──
+function triggerAnim(idx) {
+  // Scene 1: staggered fade in
+  if (idx === 0) {
+    const els = document.querySelectorAll('#sc1 > *');
+    els.forEach((el, i) => {
+      el.style.opacity = '0';
+      el.style.transform = 'translateY(20px)';
+      el.style.transition = 'none';
+      setTimeout(() => {
+        el.style.transition = `opacity 0.5s ease ${i * 0.12}s, transform 0.5s cubic-bezier(0.16,1,0.3,1) ${i * 0.12}s`;
+        el.style.opacity = '1';
+        el.style.transform = 'translateY(0)';
+      }, 100);
+    });
+  }
+
+  // Scene 2: counter roll
+  if (idx === 1) {
+    resetCounter();
+    setTimeout(() => animateCounter(), 300);
+    setTimeout(() => animateValue(document.getElementById('metaAccounts'), 0, 367589, 2000, ''), 600);
+  }
+
+  // Scene 3: bars
+  if (idx === 2) {
+    const bars = [
+      ['b1b', 48], ['b1h', 44],
+      ['b2b', 27], ['b2h', 60],
+      ['b3b', 11], ['b3h', 80]
+    ];
+    bars.forEach(([id, w]) => {
+      const el = document.getElementById(id);
+      el.style.transition = 'none';
+      el.style.width = '0';
+    });
+    setTimeout(() => {
+      bars.forEach(([id, w], i) => {
+        const el = document.getElementById(id);
+        const delay = Math.floor(i / 2) * 300 + (i % 2) * 100;
+        setTimeout(() => {
+          el.style.transition = 'width 1.4s cubic-bezier(0.16, 1, 0.3, 1)';
+          el.style.width = w + '%';
+        }, delay);
+      });
+    }, 400);
+  }
+
+  // Scene 4: negative chart
+  if (idx === 3) {
+    // Points: 2010=29%(y118), 2013=35%(y88), 2017=38%(y70), 2022=39%(y60)
+    const pts = [[60,118],[142,88],[222,70],[290,60]];
+    const lineD = `M${pts.map(p=>p.join(',')).join(' L')}`;
+    const areaD = lineD + ` L290,165 L60,165 Z`;
+
+    const line = document.getElementById('negLine');
+    const glow = document.getElementById('negGlow');
+    const area = document.getElementById('negArea');
+
+    line.setAttribute('d', lineD);
+    glow.setAttribute('d', lineD);
+    area.setAttribute('d', areaD);
+
+    const len = line.getTotalLength();
+    line.style.strokeDasharray = len;
+    line.style.strokeDashoffset = len;
+    glow.style.strokeDasharray = len;
+    glow.style.strokeDashoffset = len;
+    area.style.opacity = '0';
+
+    ['nd1','nd2','nd3','nd4'].forEach(id => document.getElementById(id).setAttribute('r', '0'));
+    ['nl1','nl2','nl3','nl4'].forEach(id => document.getElementById(id).style.opacity = '0');
+
+    document.getElementById('s4s1').classList.remove('show');
+    document.getElementById('s4s2').classList.remove('show');
+    document.getElementById('s4arrow').classList.remove('show');
+
+    setTimeout(() => {
+      line.style.transition = `stroke-dashoffset 2s cubic-bezier(0.16, 1, 0.3, 1)`;
+      line.style.strokeDashoffset = '0';
+      glow.style.transition = `stroke-dashoffset 2s cubic-bezier(0.16, 1, 0.3, 1)`;
+      glow.style.strokeDashoffset = '0';
+
+      setTimeout(() => {
+        area.style.transition = 'opacity 1s ease';
+        area.style.opacity = '1';
+      }, 600);
+
+      // Dots + labels staggered
+      pts.forEach((p, i) => {
+        setTimeout(() => {
+          const dot = document.getElementById('nd' + (i+1));
+          dot.style.transition = 'r 0.3s ease';
+          dot.setAttribute('r', '4');
+          const lbl = document.getElementById('nl' + (i+1));
+          lbl.style.transition = 'opacity 0.3s ease';
+          lbl.style.opacity = '1';
+        }, 400 + i * 350);
+      });
+    }, 400);
+
+    setTimeout(() => document.getElementById('s4s1').classList.add('show'), 1800);
+    setTimeout(() => document.getElementById('s4arrow').classList.add('show'), 2000);
+    setTimeout(() => document.getElementById('s4s2').classList.add('show'), 2200);
+  }
+
+  // Scene 5: tweets
+  if (idx === 4) {
+    ['tw1','tw2'].forEach(id => {
+      const el = document.getElementById(id);
+      el.classList.remove('show');
+      el.style.opacity = '0';
+      el.style.transform = 'translateY(24px)';
+    });
+    setTimeout(() => document.getElementById('tw1').classList.add('show'), 400);
+    setTimeout(() => document.getElementById('tw2').classList.add('show'), 900);
+  }
+
+  // Scene 6: ring
+  if (idx === 5) {
+    const ring = document.getElementById('ringFill');
+    ring.style.transition = 'none';
+    ring.style.strokeDashoffset = '440';
+    document.getElementById('ringNum').textContent = '0%';
+
+    setTimeout(() => {
+      ring.style.transition = 'stroke-dashoffset 1.8s cubic-bezier(0.16, 1, 0.3, 1)';
+      // 31% of 440 ≈ 136
+      ring.style.strokeDashoffset = (440 - 136).toString();
+      animateValue(document.getElementById('ringNum'), 0, 31, 1800, '%');
+    }, 400);
+  }
+
+  // Scene 7: points
+  if (idx === 6) {
+    ['pt1','pt2','pt3'].forEach((id, i) => {
+      const el = document.getElementById(id);
+      el.classList.remove('show');
+      setTimeout(() => el.classList.add('show'), 300 + i * 450);
+    });
+  }
+
+  // Scene 8: stagger
+  if (idx === 7) {
+    const els = document.querySelectorAll('#sc8 > *');
+    els.forEach((el, i) => {
+      el.style.opacity = '0';
+      el.style.transform = 'translateY(16px)';
+      el.style.transition = 'none';
+      setTimeout(() => {
+        el.style.transition = `opacity 0.5s ease ${i * 0.08}s, transform 0.5s cubic-bezier(0.16,1,0.3,1) ${i * 0.08}s`;
+        el.style.opacity = '1';
+        el.style.transform = 'translateY(0)';
+      }, 100);
+    });
+  }
+}
+
+// ── CONTROLS ──
+document.getElementById('overlay').addEventListener('click', () => {
+  document.getElementById('overlay').classList.add('gone');
+  playing = true;
+  goTo(0);
+});
+
+document.getElementById('navR').addEventListener('click', e => {
+  if (cur < 0) return;
+  e.stopPropagation();
+  if (cur < SCENES - 1) goTo(cur + 1);
+});
+
+document.getElementById('navL').addEventListener('click', e => {
+  if (cur < 0) return;
+  e.stopPropagation();
+  if (cur > 0) goTo(cur - 1);
+});
+</script>
+</body>
+</html>
