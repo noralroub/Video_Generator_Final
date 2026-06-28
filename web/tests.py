@@ -15,8 +15,6 @@ from web.models import VideoGenerationJob
 
 class ShippingControlsTests(TestCase):
     def setUp(self):
-        self._old_frame_renderer = os.environ.get("FRAME_RENDERER")
-        os.environ["FRAME_RENDERER"] = "templates"
         self.media_root = Path(tempfile.mkdtemp(prefix="infodemica-test-media-"))
         self.user = User.objects.create_user(
             username="shipper",
@@ -25,10 +23,6 @@ class ShippingControlsTests(TestCase):
         )
 
     def tearDown(self):
-        if self._old_frame_renderer is None:
-            os.environ.pop("FRAME_RENDERER", None)
-        else:
-            os.environ["FRAME_RENDERER"] = self._old_frame_renderer
         shutil.rmtree(self.media_root, ignore_errors=True)
 
     def login(self):
@@ -342,194 +336,63 @@ class ShippingControlsTests(TestCase):
         shutil.rmtree(output_dir, ignore_errors=True)
 
     @override_settings(MEDIA_ROOT=tempfile.gettempdir())
-    def test_edit_frames_saves_structured_frames_and_requeues_pipeline(self):
-        self.login()
-        self.make_job(paper_id="PMCFRAMES", status="completed", task_id="frames-task")
-        output_dir = Path(tempfile.gettempdir()) / "PMCFRAMES"
-        frames_dir = output_dir / "frames"
-        frames_dir.mkdir(parents=True, exist_ok=True)
-        (output_dir / "script.json").write_text(
-            json.dumps([
-                {"text": "Old narration.", "visual_type": "generated", "visual_content": "Old visual."}
-            ]),
-            encoding="utf-8",
-        )
-        (output_dir / "frames.json").write_text(
-            json.dumps([
-                {
-                    "scene_id": 0,
-                    "order": 0,
-                    "layout": "problem",
-                    "headline": "Old headline",
-                    "narration": "Old narration.",
-                    "body": "Old body",
-                    "key_points": ["Old point"],
-                    "visual_prompt": "Old visual.",
-                    "theme": "dark",
-                    "html_override": "<section>Old override</section>",
-                }
-            ]),
-            encoding="utf-8",
-        )
-        (frames_dir / "scene_00.html").write_text("<section>old</section>", encoding="utf-8")
-        (output_dir / "audio.wav").write_bytes(b"stale audio")
-        (output_dir / "audio_metadata.json").write_text("{}", encoding="utf-8")
-        (output_dir / "presentation.html").write_text("<html></html>", encoding="utf-8")
-
-        with patch("web.views._start_pipeline_async") as start_pipeline:
-            response = self.client.post(
-                reverse("edit_frames", args=["PMCFRAMES"]),
-                {
-                    "frame_count": "1",
-                    "frame_0_order": "0",
-                    "frame_0_layout": "key_finding",
-                    "frame_0_theme": "light",
-                    "frame_0_headline": "Edited headline",
-                    "frame_0_narration": "Edited narration.",
-                    "frame_0_body": "Edited body",
-                    "frame_0_key_points": "Point one\nPoint two",
-                    "frame_0_visual_prompt": "Edited visual.",
-                    "frame_0_accent_text": "Key Finding",
-                },
-            )
-
-        self.assertEqual(response.status_code, 302)
-        self.assertIn("/status/PMCFRAMES/", response["Location"])
-        start_pipeline.assert_called_once()
-        self.assertFalse(start_pipeline.call_args.kwargs["review_required"])
-        saved_frames = json.loads((output_dir / "frames.json").read_text(encoding="utf-8"))
-        self.assertEqual(saved_frames[0]["headline"], "Edited headline")
-        self.assertEqual(saved_frames[0]["layout"], "key_finding")
-        self.assertEqual(saved_frames[0]["html_override"], "")
-        self.assertEqual(saved_frames[0]["visual_prompt"], "Edited visual.")
-        rendered = (frames_dir / "scene_00.html").read_text(encoding="utf-8")
-        self.assertIn("generated-visual", rendered)
-        self.assertIn("visual-abstract", rendered)
-        self.assertNotIn("Edited visual.", rendered)
-        saved_script = json.loads((output_dir / "script.json").read_text(encoding="utf-8"))
-        self.assertEqual(saved_script[0]["text"], "Edited narration.")
-        self.assertFalse((output_dir / "audio.wav").exists())
-        self.assertFalse((output_dir / "presentation.html").exists())
-        self.assertTrue((frames_dir / "scene_00.html").exists())
-        shutil.rmtree(output_dir, ignore_errors=True)
-
-    @override_settings(MEDIA_ROOT=tempfile.gettempdir())
-    def test_edit_frames_regenerates_html_when_only_structured_fields_change(self):
-        self.login()
-        self.make_job(paper_id="PMCFRAMEHTML", status="completed", task_id="frame-html-task")
-        output_dir = Path(tempfile.gettempdir()) / "PMCFRAMEHTML"
+    def test_pipeline_progress_tracks_four_steps(self):
+        output_dir = Path(tempfile.gettempdir()) / "PMC4STEP"
         output_dir.mkdir(parents=True, exist_ok=True)
-        (output_dir / "script.json").write_text(
-            json.dumps([
-                {"text": "Old narration.", "visual_type": "generated", "visual_content": "Old visual."}
-            ]),
-            encoding="utf-8",
-        )
-        (output_dir / "frames.json").write_text(
-            json.dumps([
-                {
-                    "scene_id": 0,
-                    "order": 0,
-                    "layout": "problem",
-                    "headline": "Old headline",
-                    "narration": "Old narration.",
-                    "body": "Old body",
-                    "key_points": ["Old point"],
-                    "visual_prompt": "Old visual.",
-                    "theme": "dark",
-                    "html_override": "",
-                }
-            ]),
-            encoding="utf-8",
-        )
+        (output_dir / "paper.json").write_text(json.dumps({"title": "T", "full_text": "x"}), encoding="utf-8")
+        (output_dir / "script.json").write_text(json.dumps([{"text": "n", "visual_type": "generated", "visual_content": "v"}]), encoding="utf-8")
 
-        response = self.client.get(reverse("edit_frames", args=["PMCFRAMEHTML"]))
-        self.assertEqual(response.status_code, 200)
-        self.assertNotContains(response, "Slide HTML")
-        self.assertNotContains(response, "Layout")
-        self.assertContains(response, "Visual Notes")
+        from web.views import _get_pipeline_progress
 
-        with patch("web.views._start_pipeline_async"):
-            response = self.client.post(
-                reverse("edit_frames", args=["PMCFRAMEHTML"]),
-                {
-                    "frame_count": "1",
-                    "frame_0_order": "0",
-                    "frame_0_layout": "key_finding",
-                    "frame_0_theme": "light",
-                    "frame_0_headline": "Edited headline",
-                    "frame_0_narration": "Edited narration.",
-                    "frame_0_body": "Edited body",
-                    "frame_0_key_points": "Point one\nPoint two",
-                    "frame_0_visual_prompt": "Edited visual.",
-                    "frame_0_accent_text": "Key Finding",
-                },
-            )
+        progress = _get_pipeline_progress(output_dir)
+        self.assertEqual(progress["completed_steps"], ["fetch-paper", "generate-script"])
+        self.assertEqual(progress["current_step"], "generate-audio")
+        self.assertEqual(progress["total_steps"], 4)
 
-        self.assertEqual(response.status_code, 302)
-        saved_frames = json.loads((output_dir / "frames.json").read_text(encoding="utf-8"))
-        self.assertEqual(saved_frames[0]["headline"], "Edited headline")
-        self.assertEqual(saved_frames[0]["html_override"], "")
-        rendered = (output_dir / "frames" / "scene_00.html").read_text(encoding="utf-8")
-        self.assertIn("Edited headline", rendered)
-        self.assertNotIn("Old headline", rendered)
-        self.assertNotIn("Edited visual.", rendered)
+        (output_dir / "audio.wav").write_bytes(b"audio")
+        (output_dir / "audio_metadata.json").write_text(json.dumps({"scene_boundaries": [{"duration": 5.0}]}), encoding="utf-8")
+        progress = _get_pipeline_progress(output_dir)
+        self.assertIn("generate-audio", progress["completed_steps"])
+        self.assertEqual(progress["current_step"], "generate-presentation")
+
+        (output_dir / "presentation.html").write_text("<html></html>", encoding="utf-8")
+        (output_dir / "presentation.json").write_text(json.dumps({"schema_version": 3}), encoding="utf-8")
+        progress = _get_pipeline_progress(output_dir)
+        self.assertEqual(progress["status"], "completed")
+        self.assertEqual(len(progress["completed_steps"]), 4)
         shutil.rmtree(output_dir, ignore_errors=True)
 
     @override_settings(MEDIA_ROOT=tempfile.gettempdir())
-    def test_visual_notes_generate_visual_motif_without_visible_instruction_text(self):
+    def test_pipeline_result_renders_presentation_iframe(self):
         self.login()
-        self.make_job(paper_id="PMCVISUALNOTE", status="completed", task_id="visual-note-task")
-        output_dir = Path(tempfile.gettempdir()) / "PMCVISUALNOTE"
-        frames_dir = output_dir / "frames"
-        frames_dir.mkdir(parents=True, exist_ok=True)
-        (output_dir / "script.json").write_text(
-            json.dumps([
-                {"text": "Narration for frame.", "visual_type": "generated", "visual_content": "Old visual."}
-            ]),
-            encoding="utf-8",
-        )
-        (output_dir / "frames.json").write_text(
-            json.dumps([
-                {
-                    "scene_id": 0,
-                    "order": 0,
-                    "layout": "key_finding",
-                    "headline": "Friendly frame",
-                    "narration": "Narration for frame.",
-                    "body": "Supporting copy.",
-                    "key_points": [],
-                    "visual_prompt": "Old visual.",
-                    "theme": "dark",
-                    "html_override": "",
-                }
-            ]),
+        self.make_job(paper_id="PMCRESULT", status="completed", task_id="result-task")
+        output_dir = Path(tempfile.gettempdir()) / "PMCRESULT"
+        output_dir.mkdir(parents=True, exist_ok=True)
+        (output_dir / "presentation.html").write_text(
+            "<!DOCTYPE html><html><head></head><body><section class='scene active'></section></body></html>",
             encoding="utf-8",
         )
 
-        with patch("web.views._start_pipeline_async"):
-            response = self.client.post(
-                reverse("edit_frames", args=["PMCVISUALNOTE"]),
-                {
-                    "frame_count": "1",
-                    "frame_0_order": "0",
-                    "frame_0_layout": "key_finding",
-                    "frame_0_theme": "dark",
-                    "frame_0_headline": "Friendly frame",
-                    "frame_0_narration": "Narration for frame.",
-                    "frame_0_body": "Supporting copy.",
-                    "frame_0_key_points": "",
-                    "frame_0_visual_prompt": "Include a smiling face",
-                    "frame_0_accent_text": "Key Finding",
-                },
-            )
+        response = self.client.get(reverse("pipeline_result", args=["PMCRESULT"]))
 
-        self.assertEqual(response.status_code, 302)
-        rendered = (frames_dir / "scene_00.html").read_text(encoding="utf-8")
-        self.assertIn("generated-visual visual-face", rendered)
-        self.assertIn('class="face"', rendered)
-        self.assertNotIn("Include a smiling face", rendered)
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, "html-video-frame")
+        self.assertContains(response, "Edit Script")
+        self.assertNotContains(response, "Edit Frames")
         shutil.rmtree(output_dir, ignore_errors=True)
+
+    def test_ensure_contract_injects_audio_sync(self):
+        import sys
+
+        pipeline_dir = str(Path(__file__).resolve().parent.parent / "pipeline")
+        if pipeline_dir not in sys.path:
+            sys.path.insert(0, pipeline_dir)
+        from claude_presentation import PLACEHOLDER_AUDIO_SRC, PLACEHOLDER_SCENE_DURATIONS_JSON, _ensure_contract
+
+        html = _ensure_contract("<!DOCTYPE html><html><head></head><body><section class='scene active'></section></body></html>")
+        self.assertIn(PLACEHOLDER_AUDIO_SRC, html)
+        self.assertIn(PLACEHOLDER_SCENE_DURATIONS_JSON, html)
+        self.assertIn("timeupdate", html)
 
     @override_settings(MEDIA_ROOT=tempfile.gettempdir())
     def test_export_mp4_downloads_existing_file(self):

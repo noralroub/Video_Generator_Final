@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import logging
+from datetime import datetime
 from html import escape
 from pathlib import Path
 
@@ -457,7 +458,7 @@ def render_presentation_claude(
     if not scenes:
         raise ValueError("script.json has no scenes")
 
-    html = generate_presentation_html(script_path, paper_path)
+    html = generate_presentation_html(script_path, paper_path, output_dir=script_path.parent)
     scene_durations, total_duration = _load_audio_durations(
         audio_metadata_path or Path(""), len(scenes)
     )
@@ -484,77 +485,24 @@ def render_presentation_claude(
     )
 
 
+def build_presentation_metadata(output_dir: Path) -> dict:
+    """Write presentation.json metadata for a Claude-generated video."""
+    script_path = output_dir / "script.json"
+    scenes = load_scenes(script_path)
+    scene_boundaries = []
+    audio_meta_path = output_dir / "audio_metadata.json"
+    if audio_meta_path.exists():
+        with open(audio_meta_path, "r", encoding="utf-8") as f:
+            scene_boundaries = json.load(f).get("scene_boundaries", [])
 
-def render_structured_presentation(
-    output_dir: Path,
-    output_path: Path | None = None,
-    audio_src: str = "audio.wav",
-    paper_path: Path | None = None,
-) -> None:
-    """Render the strict frame schema into a self-contained HTML presentation."""
-    from frames import load_frames, render_frame_files
-
-    frames = sorted(load_frames(output_dir / "frames.json"), key=lambda item: item.order)
-    frames_dir = output_dir / "frames"
-    if not frames_dir.exists() or len(list(frames_dir.glob("scene_*.html"))) < len(frames):
-        render_frame_files(frames, output_dir)
-    durations, total_duration = _load_audio_durations(output_dir / "audio_metadata.json", len(frames))
-    title = _load_title(paper_path or (output_dir / "paper.json"), "Research explainer")
-    scene_markup = []
-    for idx, frame in enumerate(frames):
-        active = " active" if idx == 0 else ""
-        frame_file = frames_dir / f"scene_{idx:02d}.html"
-        if not frame_file.exists():
-            render_frame_files(frames, output_dir)
-        inner = frame_file.read_text(encoding="utf-8")
-        scene_markup.append(
-            f'<section class="scene{active}" data-scene-index="{idx + 1}">'
-            f'<iframe class="frame-shell" srcdoc="{escape(inner, quote=True)}" title="Frame {idx + 1}"></iframe>'
-            '</section>'
-        )
-    html = f"""<!DOCTYPE html>
-<html lang="en">
-<head>
-<meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>{escape(title)}</title>
-<style>
-* {{ box-sizing: border-box; }}
-body {{ margin: 0; min-height: 100vh; display: grid; place-items: center; background: #020617; font-family: Inter, system-ui, sans-serif; color: white; }}
-.stage {{ position: relative; width: min(100vw, 405px); aspect-ratio: 9 / 16; overflow: hidden; background: #020617; border-radius: 18px; box-shadow: 0 24px 80px rgba(0,0,0,.45); }}
-.scene {{ position: absolute; inset: 0; opacity: 0; pointer-events: none; transition: opacity .45s ease; }}
-.scene.active {{ opacity: 1; pointer-events: auto; }}
-.frame-shell {{ width: 100%; height: 100%; border: 0; display: block; background: #020617; }}
-.controls {{ position: absolute; z-index: 10; left: 18px; right: 18px; bottom: 18px; display: flex; align-items: center; gap: 12px; }}
-.play {{ width: 46px; height: 46px; border: 0; border-radius: 999px; color: #020617; background: white; font-size: 18px; cursor: pointer; }}
-.progress {{ flex: 1; height: 6px; overflow: hidden; border-radius: 999px; background: rgba(255,255,255,.2); }}
-.progress-fill {{ width: 0%; height: 100%; background: white; }}
-.time {{ width: 42px; font-size: 12px; color: rgba(255,255,255,.72); text-align: right; }}
-audio {{ display: none; }}
-</style>
-</head>
-<body>
-  <main class="stage">
-    <audio id="narration" src="{escape(audio_src)}" preload="auto"></audio>
-    {''.join(scene_markup)}
-    <div class="controls"><button class="play" data-play-toggle aria-label="Play or pause">▶</button><div class="progress"><div class="progress-fill" data-progress-bar></div></div><div class="time" data-time>0:00</div></div>
-  </main>
-<script>
-(function () {{
-  var audio = document.getElementById('narration');
-  var scenes = Array.prototype.slice.call(document.querySelectorAll('.scene'));
-  var play = document.querySelector('[data-play-toggle]');
-  var progress = document.querySelector('[data-progress-bar]');
-  var time = document.querySelector('[data-time]');
-  var sceneDurations = {json.dumps(durations)};
-  var totalDuration = {json.dumps(total_duration)};
-  function activeIndex(current) {{ var elapsed = 0; for (var i = 0; i < sceneDurations.length; i++) {{ elapsed += Number(sceneDurations[i]) || 0; if (current <= elapsed) return i; }} return scenes.length - 1; }}
-  function format(seconds) {{ seconds = Math.max(0, Math.floor(seconds || 0)); return Math.floor(seconds / 60) + ':' + String(seconds % 60).padStart(2, '0'); }}
-  function update() {{ var current = audio.currentTime || 0; var idx = activeIndex(current); scenes.forEach(function(scene, i) {{ scene.classList.toggle('active', i === idx); }}); progress.style.width = Math.min(100, (current / totalDuration) * 100) + '%'; time.textContent = format(current); }}
-  play.addEventListener('click', function () {{ if (audio.paused) {{ audio.play(); play.textContent = 'Ⅱ'; }} else {{ audio.pause(); play.textContent = '▶'; }} }});
-  audio.addEventListener('timeupdate', update); audio.addEventListener('ended', function () {{ play.textContent = '▶'; update(); }}); update();
-}}());
-</script>
-</body>
-</html>"""
-    (output_path or (output_dir / "presentation.html")).write_text(html, encoding="utf-8")
+    presentation = {
+        "schema_version": 3,
+        "audio": "audio.wav",
+        "presentation_html": "presentation.html",
+        "scene_count": len(scenes),
+        "scene_boundaries": scene_boundaries,
+        "created_at": datetime.utcnow().isoformat() + "Z",
+    }
+    with open(output_dir / "presentation.json", "w", encoding="utf-8") as f:
+        json.dump(presentation, f, indent=2, ensure_ascii=False)
+    return presentation

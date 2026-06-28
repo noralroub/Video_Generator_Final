@@ -59,18 +59,13 @@ def _parse_pipeline_progress(line: str, current_progress: dict) -> Optional[dict
             "complete": "awaiting review",
             "percent": 40,
         },
-        "generate-frames": {
-            "start": "step: generate-frames",
-            "complete": "complete",
-            "percent": 60,
-        },
         "generate-audio": {
             "start": "step: generate-audio",
             "complete": "complete",
-            "percent": 80,
+            "percent": 65,
         },
-        "build-presentation": {
-            "start": "step: build-presentation",
+        "generate-presentation": {
+            "start": "step: generate-presentation",
             "complete": "complete",
             "percent": 100,
         },
@@ -506,11 +501,11 @@ def generate_video_task(
         except Exception as e:
             logger.warning(f"Failed to process update queue: {e}")
         
-        # Check if pipeline succeeded (Sprint 2: completion = script + frames + audio + presentation)
+        # Check if pipeline succeeded (completion = script + audio + presentation)
         script_file = output_path / "script.json"
         audio_file = output_path / "audio.wav"
         metadata_file = output_path / "audio_metadata.json"
-        frames_file = output_path / "frames.json"
+        presentation_html = output_path / "presentation.html"
         presentation_file = output_path / "presentation.json"
         
         if review_required and return_code == 0 and script_file.exists():
@@ -541,7 +536,7 @@ def generate_video_task(
             and script_file.exists()
             and audio_file.exists()
             and metadata_file.exists()
-            and frames_file.exists()
+            and presentation_html.exists()
             and presentation_file.exists()
         ):
             task_result["status"] = "completed"
@@ -884,21 +879,20 @@ def update_job_progress_from_files(pmid: str, task_id: Optional[str] = None) -> 
             logger.debug(f"Output directory does not exist yet: {output_dir}")
             return
         
-        # Check pipeline steps (Sprint 2: 5 steps: 20%, 40%, 60%, 80%, 100%)
+        # Check pipeline steps (4 steps: 20%, 40%, 65%, 100%)
         steps = [
             ("fetch-paper", 20, lambda d: (d / "paper.json").exists()),
             ("generate-script", 40, lambda d: (d / "script.json").exists()),
             (
-                "generate-frames",
-                60,
-                lambda d: (d / "frames.json").exists() and (d / "frames").exists(),
-            ),
-            (
                 "generate-audio",
-                80,
+                65,
                 lambda d: (d / "audio.wav").exists() and (d / "audio_metadata.json").exists(),
             ),
-            ("build-presentation", 100, lambda d: (d / "presentation.json").exists()),
+            (
+                "generate-presentation",
+                100,
+                lambda d: (d / "presentation.html").exists() and (d / "presentation.json").exists(),
+            ),
         ]
         
         current_step = None

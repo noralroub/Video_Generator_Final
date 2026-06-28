@@ -18,36 +18,74 @@ PLACEHOLDER_AUDIO_SRC = "__AUDIO_SRC__"
 PLACEHOLDER_SCENE_DURATIONS_JSON = "__SCENE_DURATIONS_JSON__"
 PLACEHOLDER_TOTAL_DURATION_JSON = "__TOTAL_DURATION_JSON__"
 
-PROMPT_TEMPLATE = """You are generating a complete, self-contained HTML/CSS/JavaScript vertical video experience for a scientific paper.
+SYSTEM_FONT_STACK = (
+    'Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif'
+)
+
+PROMPT_TEMPLATE = """You are generating a complete, self-contained HTML/CSS/JavaScript vertical video for a scientific paper explainer.
 
 Paper title:
 {title}
 
-Scenes, one scene per segment:
+Scenes (one `.scene` per segment):
 {scenes_json}
 
-Write a concise HTML document that feels like a polished short-form explainer video, not a slide deck. It should resemble an animated social-media research video built from HTML.
+Style reference excerpt (quality bar — do NOT copy content, colors, or exact layout):
+{sample_excerpt}
 
-Requirements:
-1. Output one complete HTML document only. Include <!DOCTYPE html>, <html>, <head>, <style>, <body>, and <script>. Do not use markdown fences.
-2. Use a 9:16 vertical stage, centered on the page, with cinematic motion-graphics styling.
-3. Include exactly one `.scene` element per scene. Each scene must have `data-scene-index="N"` where N is 1-based. The first scene must also have class `active`.
-4. Use reusable CSS classes and CSS variables for scene variation. Do not write long bespoke CSS blocks for every scene. Use CSS transitions/animations so scene changes feel like a video: fades, scale, moving abstract shapes, timeline progress, kinetic type. Avoid external assets, external fonts, network calls, or libraries.
-5. Use the narration text as the main readable on-screen text. Keep text large, uncluttered, and mobile-friendly.
-6. Translate each visual description into HTML/CSS visuals: abstract shapes, charts, molecule-like diagrams, data cards, icons made from CSS/text, gradients, grids, and motion. Do not display the visual description itself as visible text. Use emoji only sparingly, never as the whole visual design.
-6a. If a scene includes `source_table`, render a compact, readable table/data-card in that scene using the provided label, caption, and text. Emphasize 2-4 key rows or values rather than crowding the full source table.
-6b. If a scene includes `source_figure`, render it as the main evidence image for that scene when `url` is present. Use object-fit: contain and include a short source label/caption, but do not show long captions over the narration.
-6c. When rendering a source table or source figure, reserve a distinct evidence panel above the narration and keep narration in a lower safe area. Do not absolutely position source evidence over narration or generated imagery. If source evidence is selected, let it replace the generic generated visual for that scene.
-7. Include an audio element with id `narration` and src exactly `__AUDIO_SRC__`. Hide the default audio element.
-8. Include a play/pause button, current scene indicator, and progress bar.
-9. In the script, include these exact lines on separate lines:
+Creative direction:
+1. Match the reference's craft: cinematic motion graphics, kinetic typography, ambient backgrounds, per-scene choreography, evidence panels when data/images are provided.
+2. Invent a UNIQUE visual identity for THIS paper — fresh palette, motifs, and scene designs suited to the topic. Every paper should look different.
+3. Use a full-bleed 9:16 stage (width 100%, aspect-ratio 9/16, no phone-chrome mockup borders). Center the stage on the page.
+4. Use system fonts only: {font_stack}. Do NOT load external fonts, CDNs, libraries, or network assets.
+5. Rich per-scene CSS and JavaScript animations are encouraged (counters, bars, staggered reveals, SVG rings, etc.).
+6. Use narration as primary on-screen text — large, readable, mobile-friendly. Do not dump full narration as a wall of text.
+7. Translate visual_description into HTML/CSS visuals. Do not display visual_description as visible text.
+8. If source_table is present, render a compact readable data card (2-4 key rows).
+9. If source_figure is present with a url, render it as the dominant evidence image (object-fit: contain) with a short label.
+10. When source evidence exists, give it a distinct panel above narration in a lower safe area.
+
+Audio-sync contract (NON-NEGOTIABLE — do not use setTimeout or data-dur for scene advance):
+1. Output one complete HTML document: <!DOCTYPE html>, <html>, <head>, <style>, <body>, <script>. No markdown fences.
+2. Exactly one element with class `scene` per scene. Each must have `data-scene-index="N"` (1-based). First scene also has class `active`.
+3. Include `<audio id="narration" src="__AUDIO_SRC__">` (hidden via CSS).
+4. Include play/pause button with `data-play-toggle`, progress bar with `data-progress-bar`, and optional time display.
+5. In the script, include these exact lines on separate lines:
    var sceneDurations = __SCENE_DURATIONS_JSON__;
    var totalDuration = __TOTAL_DURATION_JSON__;
-10. The script must use audio currentTime to toggle the active scene. Query scenes with `document.querySelectorAll('.scene')`.
-11. Do not mention Claude, Anthropic, Gemini, Runway, or implementation details in the visible presentation.
-12. Keep all code self-contained, robust, and compact enough to complete in one response. No inline event handlers; use addEventListener.
+6. Scene switching MUST be driven by `narration.currentTime` and cumulative sceneDurations — NOT timers.
+7. Query scenes with `document.querySelectorAll('.scene')`.
+8. No inline event handlers; use addEventListener.
+9. Do not mention Claude, Anthropic, or implementation details in visible UI.
 
 Output only raw HTML."""
+
+
+def _sample_path() -> Path:
+    return Path(__file__).parent / "templates" / "sample_presentation.html"
+
+
+def _load_sample_excerpt(max_chars: int = 12000) -> str:
+    """Load a curated excerpt from the sample presentation for style reference."""
+    path = _sample_path()
+    if not path.exists():
+        return "(No sample available.)"
+    text = path.read_text(encoding="utf-8")
+    lines = text.splitlines()
+    css_end = 0
+    for idx, line in enumerate(lines):
+        if "</style>" in line.lower():
+            css_end = idx + 1
+            break
+    css_block = "\n".join(lines[: min(css_end, 200)])
+    scene_start = next((i for i, line in enumerate(lines) if "SCENE 1" in line), None)
+    scene_block = ""
+    if scene_start is not None:
+        scene_block = "\n".join(lines[scene_start : scene_start + 15])
+    excerpt = f"{css_block}\n\n<!-- Example scene markup -->\n{scene_block}"
+    if len(excerpt) > max_chars:
+        excerpt = excerpt[:max_chars] + "\n<!-- truncated -->"
+    return excerpt
 
 
 def _load_paper(paper_path: Path | None) -> dict[str, Any]:
@@ -59,6 +97,40 @@ def _load_paper(paper_path: Path | None) -> dict[str, Any]:
     except (OSError, json.JSONDecodeError):
         return {"title": "Research explainer"}
     return {"title": data.get("title") or "Research explainer"}
+
+
+def _resolve_source_figure(output_dir: Path, figure: dict[str, Any] | None, index: int) -> dict[str, Any] | None:
+    if not figure:
+        return None
+    resolved = dict(figure)
+    figures_dir = output_dir / "source_figures"
+    if figures_dir.exists():
+        for path in sorted(figures_dir.glob(f"figure_{index}.*")):
+            resolved["url"] = f"source_figures/{path.name}"
+            return resolved
+        for path in sorted(figures_dir.glob("figure_*.*")):
+            resolved["url"] = f"source_figures/{path.name}"
+            return resolved
+    url = (figure.get("url") or "").strip()
+    if url and not url.startswith(("http://", "https://", "/")):
+        resolved["url"] = url
+    return resolved
+
+
+def _build_scenes_payload(output_dir: Path, script_path: Path) -> list[dict[str, Any]]:
+    scenes = load_scenes(script_path)
+    payload = []
+    for idx, scene in enumerate(scenes):
+        payload.append(
+            {
+                "index": idx + 1,
+                "narration": scene.text,
+                "visual_description": scene.visual_content,
+                "source_table": scene.source_table,
+                "source_figure": _resolve_source_figure(output_dir, scene.source_figure, idx),
+            }
+        )
+    return payload
 
 
 def _strip_code_fence(text: str) -> str:
@@ -107,6 +179,7 @@ def _ensure_contract(html: str) -> str:
   var totalDuration = {PLACEHOLDER_TOTAL_DURATION_JSON};
   var playButton = document.querySelector('[data-play-toggle]') || document.querySelector('.play-button') || document.querySelector('button');
   var progressBar = document.querySelector('[data-progress-bar]') || document.querySelector('.progress-fill') || document.querySelector('.progress-bar');
+  var timeEl = document.querySelector('[data-time]');
 
   function sceneIndexForTime(time) {{
     var elapsed = 0;
@@ -117,6 +190,11 @@ def _ensure_contract(html: str) -> str:
     return Math.max(0, scenes.length - 1);
   }}
 
+  function format(seconds) {{
+    seconds = Math.max(0, Math.floor(seconds || 0));
+    return Math.floor(seconds / 60) + ':' + String(seconds % 60).padStart(2, '0');
+  }}
+
   function setActiveScene(index) {{
     scenes.forEach(function (scene, i) {{
       scene.classList.toggle('active', i === index);
@@ -125,10 +203,12 @@ def _ensure_contract(html: str) -> str:
 
   function update() {{
     if (!narration || !scenes.length) return;
-    setActiveScene(sceneIndexForTime(narration.currentTime || 0));
+    var current = narration.currentTime || 0;
+    setActiveScene(sceneIndexForTime(current));
     if (progressBar && totalDuration > 0) {{
-      progressBar.style.width = Math.min(100, ((narration.currentTime || 0) / totalDuration) * 100) + '%';
+      progressBar.style.width = Math.min(100, (current / totalDuration) * 100) + '%';
     }}
+    if (timeEl) timeEl.textContent = format(current);
   }}
 
   if (narration) {{
@@ -137,10 +217,12 @@ def _ensure_contract(html: str) -> str:
   }}
   if (playButton && narration) {{
     playButton.addEventListener('click', function () {{
-      if (narration.paused) narration.play(); else narration.pause();
+      if (narration.paused) {{ narration.play(); playButton.textContent = 'Ⅱ'; }}
+      else {{ narration.pause(); playButton.textContent = '▶'; }}
     }});
   }}
   setActiveScene(0);
+  update();
 }}());
 </script>
 """
@@ -229,6 +311,7 @@ def generate_presentation_html(
     script_path: Path,
     paper_path: Path | None = None,
     api_key: str | None = None,
+    output_dir: Path | None = None,
 ) -> str:
     """Call Claude to generate a self-contained HTML video presentation."""
     if api_key is None:
@@ -236,25 +319,19 @@ def generate_presentation_html(
     if not api_key:
         raise ValueError("ANTHROPIC_API_KEY environment variable not set")
 
+    output_dir = output_dir or script_path.parent
     scenes = load_scenes(script_path)
     if not scenes:
         raise ValueError("script.json has no scenes")
 
     paper = _load_paper(paper_path)
-    scenes_data = [
-        {
-            "index": idx + 1,
-            "narration": scene.text,
-            "visual_description": scene.visual_content,
-            "source_table": scene.source_table,
-            "source_figure": scene.source_figure,
-        }
-        for idx, scene in enumerate(scenes)
-    ]
+    scenes_data = _build_scenes_payload(output_dir, script_path)
 
     prompt = PROMPT_TEMPLATE.format(
         title=paper["title"],
         scenes_json=json.dumps(scenes_data, indent=2, ensure_ascii=False),
+        sample_excerpt=_load_sample_excerpt(),
+        font_stack=SYSTEM_FONT_STACK,
     )
 
     try:
@@ -287,12 +364,12 @@ def generate_presentation_html(
     html = _strip_code_fence(response.content[0].text)
     html = _ensure_contract(html)
     if not _is_complete_html(html, len(scenes)):
-        logger.warning("Claude returned incomplete HTML; retrying with stricter compact prompt")
+        logger.warning("Claude returned incomplete HTML; retrying with stricter prompt")
         repair_prompt = (
             "Your previous HTML was incomplete. Return a COMPLETE raw HTML document now. "
             f"It must include exactly {len(scenes)} elements with class \"scene\", one per scene, "
-            "plus </body> and </html>. Use compact reusable CSS. Do not omit any scene. "
-            "Use the exact audio/sync placeholders from the original instructions.\n\n"
+            "plus </body> and </html>. Use rich motion graphics but keep audio-sync contract. "
+            "Do not omit any scene. Use the exact audio/sync placeholders from the original instructions.\n\n"
             + prompt
         )
         response = client.messages.create(

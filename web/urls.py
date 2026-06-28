@@ -11,7 +11,7 @@ from .views import (
     home, health, static_debug, upload_paper, pipeline_status, pipeline_result, register,
     api_start_generation, api_status, api_result, serve_video, my_videos, debug_video_files,
     test_r2_storage, analytics_endpoint, analytics_track_click, retry_generation,
-    delete_generation, privacy_policy, terms_of_service, review_script, edit_frames, export_mp4, source_figure_image
+    delete_generation, privacy_policy, terms_of_service, review_script, export_mp4, source_figure_image
 )
 
 urlpatterns = [
@@ -24,7 +24,6 @@ urlpatterns = [
     path("my-videos/", my_videos, name="my_videos"),
     path("status/<str:pmid>/", pipeline_status, name="pipeline_status"),
     path("review/<str:pmid>/", review_script, name="review_script"),
-    path("frames/<str:pmid>/", edit_frames, name="edit_frames"),
     path("export-mp4/<str:pmid>/", export_mp4, name="export_mp4"),
     path("source-image/<str:pmid>/<int:index>/", source_figure_image, name="source_figure_image"),
     path("result/<str:pmid>/", pipeline_result, name="pipeline_result"),

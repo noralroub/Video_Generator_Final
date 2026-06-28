@@ -34,9 +34,8 @@ STEP_LABELS = {
     "fetch-paper": "Fetching paper",
     "generate-script": "Writing narration script",
     "review-script": "Reviewing generated script",
-    "generate-frames": "Designing visual scenes",
     "generate-audio": "Generating narration audio",
-    "build-presentation": "Building interactive presentation",
+    "generate-presentation": "Generating video presentation",
     "starting": "Starting generation",
 }
 
@@ -225,109 +224,24 @@ def _pipeline_module(name: str):
     return module
 
 
-def _clear_after_frame_edits(output_dir: Path) -> None:
-    """Remove artifacts that depend on edited frame order/text, but keep frames.json."""
-    for name in ["audio.wav", "audio_metadata.json", "presentation.json", "presentation.html", "presentation.mp4"]:
-        try:
-            (output_dir / name).unlink()
-        except FileNotFoundError:
-            pass
-    mp4_dir = output_dir / "mp4_export"
-    if mp4_dir.exists():
-        shutil.rmtree(mp4_dir)
-
-
-def _ensure_frame_artifacts(output_dir: Path) -> list[dict]:
-    frames_path = output_dir / "frames.json"
-    frames_module = _pipeline_module("frames")
-    if not frames_path.exists():
-        frames_module.generate_frames_artifacts(output_dir)
-    frames = [frames_module.frame_to_dict(frame) for frame in frames_module.load_frames(frames_path)]
-    return sorted(frames, key=lambda item: item.get("order", 0))
-
-
-def _frame_render_signature(frame: dict) -> dict:
-    return {
-        "layout": frame.get("layout"),
-        "headline": frame.get("headline"),
-        "body": frame.get("body"),
-        "key_points": frame.get("key_points") or [],
-        "visual_prompt": frame.get("visual_prompt"),
-        "evidence_table": frame.get("evidence_table"),
-        "evidence_figure": frame.get("evidence_figure"),
-        "evidence_video": frame.get("evidence_video"),
-        "theme": frame.get("theme"),
-        "accent_text": frame.get("accent_text"),
-    }
-
-
-def _save_frame_artifacts(output_dir: Path, frame_dicts: list[dict], previous_frames: list[dict] | None = None) -> None:
-    frames_module = _pipeline_module("frames")
-    frame_objects = [frames_module._frame_from_dict(item, idx) for idx, item in enumerate(frame_dicts)]
-    frames_module.save_frames(frame_objects, output_dir / "frames.json")
-    frames_dir = output_dir / "frames"
-    frames_dir.mkdir(parents=True, exist_ok=True)
-    metadata_path = output_dir / "frame_render_metadata.json"
-    try:
-        with open(metadata_path, "r", encoding="utf-8") as f:
-            metadata = json.load(f)
-    except (OSError, json.JSONDecodeError):
-        metadata = {"renderer": os.getenv("FRAME_RENDERER", "claude").lower(), "frames": []}
-    records = {int(record.get("scene_id", idx)): record for idx, record in enumerate(metadata.get("frames") or [])}
-    previous_by_scene = {int(frame.get("scene_id", idx)): frame for idx, frame in enumerate(previous_frames or [])}
-    template = frames_module._load_frame_template()
-    renderer = os.getenv("FRAME_RENDERER", "claude").lower()
-    new_records = []
-    for index, frame_obj in enumerate(frame_objects):
-        output_path = frames_dir / f"scene_{index:02d}.html"
-        previous_scene_id = int(frame_dicts[index].get("scene_id", index))
-        previous = previous_by_scene.get(previous_scene_id)
-        unchanged = previous and output_path.exists() and _frame_render_signature(previous) == _frame_render_signature(frame_dicts[index])
-        if not unchanged:
-            output_path.write_text(frames_module.render_frame_html_for_output(frame_obj, template), encoding="utf-8")
-        previous_record = records.get(previous_scene_id, {})
-        new_records.append({
-            "scene_id": index,
-            "renderer": previous_record.get("renderer", renderer) if unchanged else renderer,
-            "complete_html": output_path.exists() and output_path.stat().st_size > 0,
-        })
-    with open(metadata_path, "w", encoding="utf-8") as f:
-        json.dump({"renderer": renderer, "frames": new_records}, f, indent=2)
-
-
-def _write_script_from_frames(output_dir: Path, frame_dicts: list[dict]) -> None:
-    scenes = []
-    for frame in sorted(frame_dicts, key=lambda item: item.get("order", 0)):
-        scenes.append(
-            {
-                "text": frame.get("narration", ""),
-                "visual_type": "generated",
-                "visual_content": frame.get("visual_prompt", "") or frame.get("body", ""),
-                "source_table": frame.get("evidence_table"),
-                "source_figure": frame.get("evidence_figure"),
-                "source_video": frame.get("evidence_video"),
-            }
-        )
-    with open(output_dir / "script.json", "w", encoding="utf-8") as f:
-        json.dump(scenes, f, indent=2, ensure_ascii=False)
-
-
 def _clear_downstream_artifacts(output_dir: Path) -> None:
     """Remove generated artifacts that depend on script.json."""
     for name in [
         "audio.wav",
         "audio_metadata.json",
-        "frames.json",
         "presentation.json",
         "presentation.html",
+        "presentation.mp4",
+        "frame_render_metadata.json",
     ]:
         try:
             (output_dir / name).unlink()
         except FileNotFoundError:
             pass
-    frames_dir = output_dir / "frames"
-    if frames_dir.exists():
-        shutil.rmtree(frames_dir)
+    for dirname in ("frames", "mp4_export"):
+        path = output_dir / dirname
+        if path.exists():
+            shutil.rmtree(path)
 
 
 
@@ -1286,9 +1200,8 @@ def _get_completed_steps_from_progress(progress_percent: int) -> list:
     steps = [
         ("fetch-paper", 20),
         ("generate-script", 40),
-        ("generate-frames", 60),
-        ("generate-audio", 80),
-        ("build-presentation", 100),
+        ("generate-audio", 65),
+        ("generate-presentation", 100),
     ]
     
     completed_steps = []
@@ -1312,20 +1225,20 @@ def _get_pipeline_progress(output_dir: Path) -> Dict:
     - error: error message if failed (from Celery task)
     - error_type: user-friendly error type
     """
-    # Sprint 2: track all five logical steps in the new pipeline
+    # Track four logical pipeline steps
     steps = [
         ("fetch-paper", lambda d: (d / "paper.json").exists()),
         ("generate-script", lambda d: (d / "script.json").exists()),
-        (
-            "generate-frames",
-            lambda d: (d / "frames.json").exists() and (d / "frames").exists(),
-        ),
         (
             "generate-audio",
             lambda d: (d / "audio.wav").exists()
             and (d / "audio_metadata.json").exists(),
         ),
-        ("build-presentation", lambda d: (d / "presentation.json").exists()),
+        (
+            "generate-presentation",
+            lambda d: (d / "presentation.html").exists()
+            and (d / "presentation.json").exists(),
+        ),
     ]
     
     completed_steps = []
@@ -1755,7 +1668,7 @@ def pipeline_status(request, pmid: str):
                         "current_step": job.current_step,
                         "completed_steps": completed_steps,
                         "progress_percent": job.progress_percent,
-                        "total_steps": 5,
+                        "total_steps": 4,
                     }
                     if job.status == 'failed':
                         progress["error"] = job.error_message
@@ -1782,7 +1695,7 @@ def pipeline_status(request, pmid: str):
                         "current_step": job.current_step,
                         "completed_steps": completed_steps,
                         "progress_percent": job.progress_percent,
-                        "total_steps": 5,
+                        "total_steps": 4,
                     }
                     if job.status == 'failed':
                         progress["error"] = job.error_message
@@ -1813,12 +1726,11 @@ def pipeline_status(request, pmid: str):
                     "completed_steps": [
                         "fetch-paper",
                         "generate-script",
-                        "generate-frames",
                         "generate-audio",
-                        "build-presentation",
+                        "generate-presentation",
                     ],
                     "progress_percent": 100,
-                    "total_steps": 5,
+                    "total_steps": 4,
                 }
             else:
                 progress = {
@@ -1826,7 +1738,7 @@ def pipeline_status(request, pmid: str):
                     "current_step": None,
                     "completed_steps": [],
                     "progress_percent": 0,
-                    "total_steps": 5,
+                    "total_steps": 4,
                 }
     else:
         task_result = get_task_status(pmid)
@@ -1839,7 +1751,7 @@ def pipeline_status(request, pmid: str):
                     "current_step": "review-script",
                     "completed_steps": ["fetch-paper", "generate-script"],
                     "progress_percent": 40,
-                    "total_steps": progress.get("total_steps", 5),
+                    "total_steps": progress.get("total_steps", 4),
                 }
             elif task_result.get("status") == "failed":
                 progress = {
@@ -1847,7 +1759,7 @@ def pipeline_status(request, pmid: str):
                     "current_step": None,
                     "completed_steps": progress.get("completed_steps", []),
                     "progress_percent": progress.get("progress_percent", 0),
-                    "total_steps": progress.get("total_steps", 5),
+                    "total_steps": progress.get("total_steps", 4),
                     "error": task_result.get("error"),
                     "error_type": task_result.get("error_type") or "pipeline_error",
                 }
@@ -1958,21 +1870,10 @@ def pipeline_status(request, pmid: str):
 
 
 def pipeline_result(request, pmid: str):
-    """Display HTML frames + audio presentation for a completed pipeline run."""
+    """Display the generated HTML video presentation for a completed pipeline run."""
     can_manage = _can_manage_paper(request.user, pmid)
     output_dir = Path(settings.MEDIA_ROOT) / pmid
     html_presentation_path = output_dir / "presentation.html"
-    if (output_dir / "frames.json").exists() and os.getenv("PRESENTATION_PROVIDER", "templates").lower() != "claude":
-        try:
-            presentation_module = _pipeline_module("presentation")
-            presentation_module.render_structured_presentation(
-                output_dir=output_dir,
-                output_path=html_presentation_path,
-                audio_src="audio.wav",
-                paper_path=output_dir / "paper.json",
-            )
-        except Exception as exc:
-            logger.warning(f"Could not refresh structured presentation for {pmid}: {exc}")
 
     if html_presentation_path.exists():
         presentation_html_doc = html_presentation_path.read_text(encoding="utf-8")
@@ -1997,100 +1898,11 @@ def pipeline_result(request, pmid: str):
                 "pmid": pmid,
                 "presentation_html_url": f"{settings.MEDIA_URL}{pmid}/presentation.html",
                 "presentation_html_doc": presentation_html_doc,
-                "frames": [],
-                "audio_url": None,
                 "can_manage": can_manage,
             },
         )
 
-    presentation_path = output_dir / "presentation.json"
-
-    if not presentation_path.exists():
-        task_result = get_task_status(pmid)
-        if not task_result or task_result.get("status") != "completed":
-            # Presentation not ready yet – keep existing status flow
-            return HttpResponseRedirect(reverse("pipeline_status", args=[pmid]))
-
-        paper_title = "Simulated Paper Title"
-        paper_path = output_dir / "paper.json"
-        if paper_path.exists():
-            try:
-                with open(paper_path, "r", encoding="utf-8") as f:
-                    paper_title = json.load(f).get("title") or paper_title
-            except Exception:
-                pass
-
-        narration = "This simulated run completed successfully. Add real API keys and disable simulation mode to generate the full narrated presentation."
-        script_path = output_dir / "script.json"
-        if script_path.exists():
-            try:
-                with open(script_path, "r", encoding="utf-8") as f:
-                    scenes = json.load(f).get("scenes", [])
-                if scenes:
-                    narration = scenes[0].get("narration") or narration
-            except Exception:
-                pass
-
-        frames = [
-            {
-                "scene_id": 0,
-                "start_time": 0,
-                "end_time": 5,
-                "html": (
-                    "<section style='aspect-ratio:9/16;min-height:520px;"
-                    "display:flex;flex-direction:column;justify-content:center;"
-                    "gap:1rem;padding:2rem;background:#0f172a;color:#f8fafc;"
-                    "font-family:Inter,system-ui,sans-serif;'>"
-                    f"<p style='margin:0;color:#38bdf8;text-transform:uppercase;letter-spacing:.12em;'>Simulation Result</p>"
-                    f"<h1 style='margin:0;font-size:2.5rem;line-height:1.05;'>{paper_title}</h1>"
-                    f"<p style='margin:0;font-size:1.15rem;line-height:1.5;color:#cbd5e1;'>{narration}</p>"
-                    "</section>"
-                ),
-            }
-        ]
-        audio_url = f"{settings.MEDIA_URL}{pmid}/audio.wav" if (output_dir / "audio.wav").exists() else None
-        return render(request, "result.html", {"pmid": pmid, "audio_url": audio_url, "frames": frames, "can_manage": can_manage})
-
-    try:
-        with open(presentation_path, "r", encoding="utf-8") as f:
-            presentation = json.load(f)
-    except Exception:
-        # If we can't read or parse the presentation, fall back to status page
-        return HttpResponseRedirect(reverse("pipeline_status", args=[pmid]))
-
-    frames_meta = presentation.get("frames", [])
-    frames = []
-
-    for frame_meta in frames_meta:
-        html_rel_path = frame_meta.get("frame_html_path")
-        if not html_rel_path:
-            continue
-        html_path = output_dir / html_rel_path
-        try:
-            html = html_path.read_text(encoding="utf-8")
-        except OSError:
-            html = "<div>Frame HTML not found.</div>"
-
-        frames.append(
-            {
-                "scene_id": frame_meta.get("scene_id"),
-                "start_time": frame_meta.get("start_time"),
-                "end_time": frame_meta.get("end_time"),
-                "html": html,
-            }
-        )
-
-    # Audio is stored alongside other artifacts in MEDIA_ROOT
-    audio_rel = presentation.get("audio", "audio.wav")
-    audio_url = f"{settings.MEDIA_URL}{pmid}/{audio_rel}"
-
-    context = {
-        "pmid": pmid,
-        "audio_url": audio_url,
-        "frames": frames,
-        "can_manage": can_manage,
-    }
-    return render(request, "result.html", context)
+    return HttpResponseRedirect(reverse("pipeline_status", args=[pmid]))
 
 
 @login_required
@@ -2214,7 +2026,7 @@ def review_script(request, pmid: str):
             logger.warning(f"Could not remove review placeholder job for {pmid}: {exc}")
 
         _start_pipeline_async(pmid, output_dir, request.user.id, review_required=False)
-        messages.success(request, "Script approved. Generating audio and the final presentation now.")
+        messages.success(request, "Script saved. Regenerating audio and video now.")
         return redirect("pipeline_status", pmid=pmid)
 
     return render(
@@ -2228,141 +2040,6 @@ def review_script(request, pmid: str):
         },
     )
 
-
-
-@login_required
-def edit_frames(request, pmid: str):
-    """Edit structured frames before regenerating audio and presentation."""
-    if not _can_manage_paper(request.user, pmid):
-        raise Http404("Generation not found")
-
-    output_dir = Path(settings.MEDIA_ROOT) / pmid
-    if not (output_dir / "script.json").exists():
-        messages.info(request, "The script is not ready yet. Generate or review the script first.")
-        return redirect("pipeline_status", pmid=pmid)
-
-    try:
-        frames = _ensure_frame_artifacts(output_dir)
-    except Exception as exc:
-        logger.warning(f"Could not load editable frames for {pmid}: {exc}")
-        messages.error(request, "Editable frames could not be loaded. Please retry this paper.")
-        return redirect("pipeline_status", pmid=pmid)
-
-    source_snippets = _load_source_snippets(output_dir)
-    layout_choices = [
-        ("title_hook", "Title/Hook"),
-        ("problem", "Problem"),
-        ("key_finding", "Key Finding"),
-        ("source_figure", "Source Figure"),
-        ("source_table", "Source Table"),
-        ("comparison", "Comparison"),
-        ("process_timeline", "Process/Timeline"),
-        ("impact_takeaway", "Impact/Takeaway"),
-    ]
-
-    if request.method == "POST":
-        count = int(request.POST.get("frame_count") or 0)
-        edited = []
-        errors = []
-        for index in range(count):
-            if request.POST.get(f"frame_{index}_delete"):
-                continue
-            headline = (request.POST.get(f"frame_{index}_headline") or "").strip()
-            narration = (request.POST.get(f"frame_{index}_narration") or "").strip()
-            if not headline:
-                errors.append(f"Frame {index + 1} headline cannot be empty.")
-            if not narration:
-                errors.append(f"Frame {index + 1} narration cannot be empty.")
-            layout = request.POST.get(f"frame_{index}_layout") or "key_finding"
-            order_raw = request.POST.get(f"frame_{index}_order") or str(index)
-            try:
-                order = int(order_raw)
-            except ValueError:
-                order = index
-            evidence_table = None
-            evidence_figure = None
-            evidence_video = None
-            table_raw = (request.POST.get(f"frame_{index}_source_table") or "").strip()
-            figure_raw = (request.POST.get(f"frame_{index}_source_figure") or "").strip()
-            video_raw = (request.POST.get(f"frame_{index}_source_video") or "").strip()
-            if table_raw:
-                try:
-                    evidence_table = source_snippets["tables"][int(table_raw)]
-                except (ValueError, IndexError):
-                    errors.append(f"Frame {index + 1} selected table is no longer available.")
-            if figure_raw:
-                try:
-                    evidence_figure = dict(source_snippets["figures"][int(figure_raw)])
-                    evidence_figure["url"] = _source_figure_proxy_url(pmid, int(figure_raw))
-                except (ValueError, IndexError):
-                    errors.append(f"Frame {index + 1} selected image is no longer available.")
-            if video_raw:
-                try:
-                    evidence_video = source_snippets["videos"][int(video_raw)]
-                except (ValueError, IndexError):
-                    errors.append(f"Frame {index + 1} selected video is no longer available.")
-            # Slide HTML is intentionally not user-editable in the simplified editor.
-            # Visual notes should guide generation, while structured fields render the video.
-            html_override = ""
-            edited.append(
-                {
-                    "scene_id": len(edited),
-                    "order": order,
-                    "layout": layout,
-                    "headline": headline,
-                    "narration": narration,
-                    "body": (request.POST.get(f"frame_{index}_body") or "").strip(),
-                    "key_points": [line.strip() for line in (request.POST.get(f"frame_{index}_key_points") or "").splitlines() if line.strip()],
-                    "visual_prompt": (request.POST.get(f"frame_{index}_visual_prompt") or "").strip(),
-                    "evidence_table": evidence_table,
-                    "evidence_figure": evidence_figure,
-                    "evidence_video": evidence_video,
-                    "accent_text": (request.POST.get(f"frame_{index}_accent_text") or "").strip(),
-                    "theme": request.POST.get(f"frame_{index}_theme") or "dark",
-                    "animation": "fade",
-                    "html_override": html_override,
-                }
-            )
-        if not edited:
-            errors.append("At least one frame is required.")
-        if errors:
-            for error in errors:
-                messages.error(request, error)
-        else:
-            edited = sorted(edited, key=lambda item: item.get("order", 0))
-            for new_index, frame in enumerate(edited):
-                frame["scene_id"] = new_index
-                frame["order"] = new_index
-            _save_frame_artifacts(output_dir, edited, previous_frames=frames)
-            _write_script_from_frames(output_dir, edited)
-            _clear_after_frame_edits(output_dir)
-            _start_pipeline_async(pmid, output_dir, request.user.id, review_required=False)
-            messages.success(request, "Frames saved. Regenerating narration timing and presentation now.")
-            return redirect("pipeline_status", pmid=pmid)
-
-    frames_module = _pipeline_module("frames")
-    frames_dir = output_dir / "frames"
-    for index, frame in enumerate(frames):
-        frame["key_points_text"] = "\n".join(frame.get("key_points") or [])
-        frame_file = frames_dir / f"scene_{index:02d}.html"
-        if frame_file.exists():
-            frame["slide_html"] = frame_file.read_text(encoding="utf-8")
-        else:
-            try:
-                frame_obj = frames_module._frame_from_dict(frame, index)
-                frame["slide_html"] = frames_module.render_frame_html(frame_obj)
-            except Exception:
-                frame["slide_html"] = frame.get("html_override", "")
-    return render(
-        request,
-        "frame_review.html",
-        {
-            "pmid": pmid,
-            "frames": frames,
-            "layout_choices": layout_choices,
-            "source_snippets": source_snippets,
-        },
-    )
 
 
 @login_required
@@ -2802,7 +2479,7 @@ def api_status(request, paper_id: str):
     {
         "paper_id": "PMC10979640",
         "status": "running",  # pending, running, completed, failed
-        "current_step": "build-presentation",
+        "current_step": "generate-presentation",
         "completed_steps": ["fetch-paper", "generate-script", "generate-audio"],
         "progress_percent": 60,
         "final_video_url": "/media/PMC10979640/final_video.mp4" or null,
