@@ -1,9 +1,9 @@
 <!--
-  Audio-synced motion reference for Claude presentations.
-  Copy patterns — do NOT copy colors, copy, or exact layout.
+  Infodemica presentation kit — injected into every generated HTML video.
+  Copy patterns; do NOT copy exact colors or copy from the sample.
 -->
 
-<!-- ── CSS: ambient + reveal + optional hero motion ── -->
+<!-- ── CSS: layout, typography, ambient, reveals, components ── -->
 <style>
 @keyframes orbDrift {
   0% { transform: translate(0, 0) scale(1); }
@@ -14,9 +14,52 @@
   from { transform: scale(1) translate(0, 0); }
   to { transform: scale(1.06) translate(-1.5%, -1%); }
 }
-@keyframes gradientShift {
-  0% { background-position: 0% 50%; }
-  100% { background-position: 100% 50%; }
+@keyframes wordPop {
+  0% { transform: scale(1); }
+  40% { transform: scale(1.1); }
+  100% { transform: scale(1); }
+}
+
+body {
+  margin: 0;
+  min-height: 100vh;
+  display: grid;
+  place-items: center;
+  background: #050505;
+  font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  color: #fff;
+  overflow: hidden;
+}
+.stage {
+  position: relative;
+  width: min(100vw, 405px);
+  aspect-ratio: 9 / 16;
+  overflow: hidden;
+  background: #000;
+  border-radius: 18px;
+  box-shadow: 0 24px 80px rgba(0, 0, 0, 0.45);
+}
+.scene {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 18px;
+  padding: 56px 28px 92px;
+  opacity: 0;
+  visibility: hidden;
+  transition: opacity 0.55s ease, transform 0.55s ease;
+  will-change: opacity, transform;
+}
+.scene.active {
+  opacity: 1;
+  visibility: visible;
+}
+.scene > *:not(.ambient) {
+  position: relative;
+  z-index: 1;
 }
 
 .ambient {
@@ -30,13 +73,31 @@
   position: absolute;
   border-radius: 50%;
   filter: blur(70px);
-  opacity: 0.32;
+  opacity: 0.3;
   animation: orbDrift 18s ease-in-out infinite alternate;
+  transition: background 1.2s ease;
 }
-.ken-burns img {
-  animation: kenBurns 9s ease-in-out infinite alternate;
-  transform-origin: center center;
+
+.headline {
+  font-weight: 800;
+  font-size: clamp(32px, 8vw, 46px);
+  line-height: 1.05;
+  letter-spacing: -0.03em;
+  text-align: center;
+  color: #fff;
+  max-width: 100%;
+  text-wrap: balance;
 }
+.subtext {
+  font-weight: 400;
+  font-size: clamp(14px, 3.8vw, 17px);
+  line-height: 1.55;
+  text-align: center;
+  color: rgba(255, 255, 255, 0.62);
+  max-width: 100%;
+  text-wrap: balance;
+}
+.accent { color: var(--accent, #35d0ff); }
 
 [data-reveal], .reveal-line {
   opacity: 0;
@@ -49,22 +110,236 @@
   opacity: 1;
   transform: translateY(0);
 }
+.emph {
+  display: inline-block;
+  font-weight: 700;
+  color: var(--accent, #35d0ff);
+}
+[data-reveal].is-visible .emph {
+  animation: wordPop 0.35s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+}
+[data-reveal].is-visible .emph + .emph {
+  animation-delay: 0.08s;
+}
+
+.ken-burns img {
+  animation: kenBurns 9s ease-in-out infinite alternate;
+  transform-origin: center center;
+}
+
+.evidence-panel {
+  width: 100%;
+  max-height: 38%;
+  flex-shrink: 0;
+}
+.figure-panel {
+  width: 100%;
+  padding: 12px;
+  border-radius: 14px;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  background: rgba(255, 255, 255, 0.04);
+  text-align: center;
+}
+.figure-panel img {
+  display: block;
+  width: 100%;
+  max-height: 220px;
+  object-fit: contain;
+  border-radius: 10px;
+}
+.figure-panel .figure-label {
+  font-size: 11px;
+  color: rgba(255, 255, 255, 0.45);
+  margin-top: 8px;
+}
+
+.stat-counter {
+  font-variant-numeric: tabular-nums;
+  font-weight: 800;
+  font-size: clamp(48px, 12vw, 72px);
+  line-height: 1;
+  letter-spacing: -0.04em;
+  color: var(--accent, #35d0ff);
+  text-align: center;
+}
+.stat-counter-label {
+  font-size: 14px;
+  color: rgba(255, 255, 255, 0.55);
+  margin-top: 10px;
+  text-align: center;
+}
+
+.stat-grid {
+  display: flex;
+  gap: 14px;
+  width: 100%;
+  justify-content: center;
+}
+.stat-grid-item {
+  flex: 1;
+  max-width: 140px;
+  padding: 14px 10px;
+  border-radius: 14px;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  background: rgba(255, 255, 255, 0.04);
+  text-align: center;
+}
+.stat-grid-val {
+  font-variant-numeric: tabular-nums;
+  font-weight: 700;
+  font-size: clamp(26px, 6vw, 32px);
+  color: var(--accent, #35d0ff);
+}
+.stat-grid-label {
+  font-size: 11px;
+  color: rgba(255, 255, 255, 0.45);
+  margin-top: 4px;
+  line-height: 1.3;
+}
+
+.bar-chart {
+  width: 100%;
+}
+.bar-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 12px;
+}
+.bar-label {
+  flex: 0 0 72px;
+  font-size: 11px;
+  color: rgba(255, 255, 255, 0.45);
+  text-align: right;
+}
+.bar-track {
+  flex: 1;
+  height: 28px;
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.06);
+  overflow: hidden;
+}
+.bar-fill {
+  height: 100%;
+  width: 0;
+  border-radius: 8px;
+  background: linear-gradient(90deg, var(--accent, #35d0ff), color-mix(in srgb, var(--accent, #35d0ff) 60%, #fff));
+  transition: width 1.4s cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+.mini-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 12px;
+}
+.mini-table-wrap {
+  width: 100%;
+  padding: 12px;
+  border-radius: 14px;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  background: rgba(255, 255, 255, 0.04);
+  overflow: hidden;
+}
+.mini-table th,
+.mini-table td {
+  padding: 6px 8px;
+  border-top: 1px solid rgba(255, 255, 255, 0.08);
+  text-align: left;
+}
+.mini-table th {
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: rgba(255, 255, 255, 0.45);
+  border-top: 0;
+}
+
+.narration-block {
+  width: 100%;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 10px;
+  flex-shrink: 0;
+}
 </style>
 
-<!-- ── Example scene markup with phrase reveals ── -->
+<!-- ── Example scene markup: headline_only ── -->
 <!--
 <section class="scene active" data-scene-index="1">
   <div class="ambient" aria-hidden="true">
     <div class="ambient-orb" style="width:260px;height:260px;top:-60px;right:-80px;background:radial-gradient(circle,rgba(255,107,53,0.28),transparent 70%);"></div>
     <div class="ambient-orb" style="width:220px;height:220px;bottom:-40px;left:-60px;background:radial-gradient(circle,rgba(53,208,255,0.22),transparent 70%);animation-delay:-6s;"></div>
   </div>
-  <h1 class="headline" data-reveal data-enter-ms="120">1.15 million tweets</h1>
-  <p class="subtext" data-reveal data-enter-ms="480">about statins were posted on Twitter</p>
-  <p class="subtext" data-reveal data-enter-ms="920">between 2010 and 2022</p>
+  <div class="narration-block">
+    <h1 class="headline" data-reveal data-enter-ms="0">1.15 million tweets</h1>
+    <p class="subtext" data-reveal data-enter-ms="480">about statins were posted on Twitter</p>
+    <p class="subtext" data-reveal data-enter-ms="920">between 2010 and 2022</p>
+  </div>
 </section>
 -->
 
-<!-- ── JS: audio-synced scene + staggered reveals (NO setTimeout for scene advance) ── -->
+<!-- ── Example: stat_counter ── -->
+<!--
+<div class="stat-counter" data-animate="counter" data-target="1155735" data-suffix="">0</div>
+<p class="stat-counter-label" data-reveal data-enter-ms="600">total tweets analyzed</p>
+-->
+
+<!-- ── Example: stat_pair ── -->
+<!--
+<div class="stat-grid">
+  <div class="stat-grid-item" data-reveal data-enter-ms="200">
+    <div class="stat-grid-val" data-animate="counter" data-target="27">0</div>
+    <div class="stat-grid-label">Treatment</div>
+  </div>
+  <div class="stat-grid-item" data-reveal data-enter-ms="400">
+    <div class="stat-grid-val" data-animate="counter" data-target="15">0</div>
+    <div class="stat-grid-label">Control</div>
+  </div>
+</div>
+-->
+
+<!-- ── Example: bar_comparison ── -->
+<!--
+<div class="bar-chart">
+  <div class="bar-row" data-reveal data-enter-ms="200">
+    <div class="bar-label">2010–14</div>
+    <div class="bar-track"><div class="bar-fill" data-animate="bar" data-value="48"></div></div>
+  </div>
+  <div class="bar-row" data-reveal data-enter-ms="500">
+    <div class="bar-label">2015–19</div>
+    <div class="bar-track"><div class="bar-fill" data-animate="bar" data-value="60"></div></div>
+  </div>
+</div>
+-->
+
+<!-- ── Example: mini_table ── -->
+<!--
+<div class="mini-table-wrap evidence-panel" data-reveal data-enter-ms="0">
+  <table class="mini-table">
+    <tr><th>Group</th><th>Result</th></tr>
+    <tr><td>Treatment</td><td>27%</td></tr>
+    <tr><td>Control</td><td>15%</td></tr>
+  </table>
+</div>
+-->
+
+<!-- ── Example: figure_focus ── -->
+<!--
+<div class="figure-panel evidence-panel ken-burns" data-reveal data-enter-ms="0">
+  <img src="source_figures/figure_0.jpg" alt="Study figure">
+  <div class="figure-label">Figure 1 — key result</div>
+</div>
+-->
+
+<!-- ── Example: emphasis words ── -->
+<!--
+<p class="headline" data-reveal data-enter-ms="400">
+  <span class="emph">Statins</span> reduced heart attacks by <span class="emph">27%</span>
+</p>
+-->
+
+<!-- ── JS: audio-synced scene + reveals + orb palette + components ── -->
 <script>
 (function () {
   var narration = document.getElementById('narration');
@@ -72,6 +347,17 @@
   var sceneDurations = __SCENE_DURATIONS_JSON__;
   var totalDuration = __TOTAL_DURATION_JSON__;
   var lastSceneIndex = -1;
+  var playButton = document.querySelector('[data-play-toggle]') || document.querySelector('.play-button') || document.querySelector('.play');
+  var progressBar = document.querySelector('[data-progress-bar]') || document.querySelector('.progress-fill');
+  var timeEl = document.querySelector('[data-time]') || document.querySelector('.time');
+
+  var orbPalettes = [
+    ['rgba(255,107,53,0.28)', 'rgba(53,208,255,0.22)'],
+    ['rgba(53,208,255,0.3)', 'rgba(53,255,176,0.18)'],
+    ['rgba(255,51,85,0.28)', 'rgba(53,208,255,0.2)'],
+    ['rgba(255,209,102,0.28)', 'rgba(255,107,53,0.16)'],
+    ['rgba(99,102,241,0.28)', 'rgba(236,72,153,0.18)']
+  ];
 
   function sceneIndexForTime(time) {
     var elapsed = 0;
@@ -90,9 +376,69 @@
     return start;
   }
 
+  function format(seconds) {
+    seconds = Math.max(0, Math.floor(seconds || 0));
+    return Math.floor(seconds / 60) + ':' + String(seconds % 60).padStart(2, '0');
+  }
+
   function setActiveScene(index) {
     scenes.forEach(function (scene, i) {
       scene.classList.toggle('active', i === index);
+    });
+  }
+
+  function shiftOrbPalette(index) {
+    var scene = scenes[index];
+    if (!scene) return;
+    var orbs = scene.querySelectorAll('.ambient-orb');
+    var palette = orbPalettes[index % orbPalettes.length];
+    if (orbs[0]) {
+      orbs[0].style.background = 'radial-gradient(circle,' + palette[0] + ',transparent 70%)';
+    }
+    if (orbs[1]) {
+      orbs[1].style.background = 'radial-gradient(circle,' + palette[1] + ',transparent 70%)';
+    }
+  }
+
+  function resetComponents(scene) {
+    if (!scene) return;
+    scene.querySelectorAll('[data-animate="bar"]').forEach(function (el) {
+      el.style.width = '0';
+    });
+    scene.querySelectorAll('[data-animate="counter"]').forEach(function (el) {
+      el.textContent = '0' + (el.getAttribute('data-suffix') || '');
+    });
+  }
+
+  function animateCounter(el) {
+    var target = parseFloat(el.getAttribute('data-target') || '0');
+    var suffix = el.getAttribute('data-suffix') || '';
+    var start = 0;
+    var duration = 1800;
+    var startTime = null;
+    function step(ts) {
+      if (!startTime) startTime = ts;
+      var progress = Math.min((ts - startTime) / duration, 1);
+      var eased = 1 - Math.pow(1 - progress, 3);
+      var val = Math.round(start + (target - start) * eased);
+      el.textContent = val.toLocaleString() + suffix;
+      if (progress < 1) requestAnimationFrame(step);
+    }
+    requestAnimationFrame(step);
+  }
+
+  function triggerComponents(sceneIndex) {
+    var scene = scenes[sceneIndex];
+    if (!scene) return;
+    resetComponents(scene);
+    requestAnimationFrame(function () {
+      scene.querySelectorAll('[data-animate="bar"]').forEach(function (el) {
+        var value = Math.min(100, Math.max(0, parseFloat(el.getAttribute('data-value') || '0')));
+        el.style.width = value + '%';
+      });
+      scene.querySelectorAll('[data-animate="counter"]').forEach(function (el) {
+        animateCounter(el);
+      });
     });
   }
 
@@ -120,8 +466,14 @@
       lastSceneIndex = idx;
       resetReveals();
       setActiveScene(idx);
+      shiftOrbPalette(idx);
+      triggerComponents(idx);
     }
     updateReveals(idx, current);
+    if (progressBar && totalDuration > 0) {
+      progressBar.style.width = Math.min(100, (current / totalDuration) * 100) + '%';
+    }
+    if (timeEl) timeEl.textContent = format(current);
   }
 
   if (narration) {
@@ -129,7 +481,20 @@
     narration.addEventListener('seeked', update);
     narration.addEventListener('ended', update);
   }
+  if (playButton && narration) {
+    playButton.addEventListener('click', function () {
+      if (narration.paused) {
+        narration.play();
+        playButton.textContent = 'Ⅱ';
+      } else {
+        narration.pause();
+        playButton.textContent = '▶';
+      }
+    });
+  }
   setActiveScene(0);
+  shiftOrbPalette(0);
+  triggerComponents(0);
   update();
 })();
 </script>

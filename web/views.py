@@ -15,6 +15,7 @@ from django.utils import timezone
 from datetime import timedelta
 
 logger = logging.getLogger(__name__)
+
 from django.contrib import messages
 from django.contrib.auth import login
 from django.contrib.auth.decorators import login_required, user_passes_test
@@ -195,6 +196,32 @@ def _ensure_presentation_code_cleanup(html: str) -> str:
     if "</body>" in html:
         return html.replace("</body>", cleanup_script + "</body>", 1)
     return html + cleanup_script
+
+
+def _ensure_result_embed(html: str) -> str:
+    """Inject or refresh results-page iframe CSS so scenes stay centered."""
+    embed_style = (
+        '<style data-infodemica-embed="true">'
+        "html,body{height:100%;margin:0;}"
+        "body{display:flex;align-items:center;justify-content:center;min-height:100%;}"
+        ".stage{width:100%;height:100%;max-width:none;border-radius:0;box-shadow:none;}"
+        ".scene{display:flex!important;flex-direction:column!important;align-items:center!important;"
+        "justify-content:center!important;gap:18px!important;padding:56px 28px 92px!important;}"
+        ".scene .narration-block{margin-top:0!important;}"
+        ".scene .evidence-panel,.scene .figure-panel,.scene .mini-table-wrap,.scene .bar-chart{margin:0!important;}"
+        "</style>"
+    )
+    if re.search(r'<style\s+data-infodemica-embed="true"\s*>', html, re.IGNORECASE):
+        html = re.sub(
+            r'<style\s+data-infodemica-embed="true"\s*>.*?</style>\s*',
+            embed_style + "\n",
+            html,
+            count=1,
+            flags=re.DOTALL | re.IGNORECASE,
+        )
+    elif "</head>" in html:
+        html = html.replace("</head>", embed_style + "\n</head>", 1)
+    return html
 
 
 def _source_figure_proxy_url(pmid: str, index: int) -> str:
@@ -1891,6 +1918,10 @@ def pipeline_result(request, pmid: str):
                     + presentation_html_doc[head_end + 1 :]
                 )
         presentation_html_doc = _ensure_presentation_code_cleanup(presentation_html_doc)
+        claude_presentation = _pipeline_module("claude_presentation")
+        presentation_html_doc = claude_presentation.sanitize_presentation_html(presentation_html_doc)
+        presentation_html_doc = claude_presentation._ensure_motion(presentation_html_doc)
+        presentation_html_doc = _ensure_result_embed(presentation_html_doc)
         return render(
             request,
             "result.html",

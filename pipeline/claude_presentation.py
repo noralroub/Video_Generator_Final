@@ -9,7 +9,7 @@ import re
 from pathlib import Path
 from typing import Any
 
-from scenes import load_scenes
+from scenes import compute_phrase_timings, enrich_scene, load_scenes
 
 logger = logging.getLogger(__name__)
 
@@ -33,21 +33,29 @@ Scenes (one `.scene` per segment):
 Style reference excerpt (quality bar — do NOT copy content, colors, or exact layout):
 {sample_excerpt}
 
+Component catalog (use kit classes — do NOT invent new chart types when visual_layout is set):
+- headline_only: centered `.headline` / `.subtext` phrase reveals in `.narration-block`
+- stat_counter: `.stat-counter` with `data-animate="counter" data-target="N"` plus optional `.stat-counter-label`
+- stat_pair: `.stat-grid` with two `.stat-grid-item` cells and counter values
+- bar_comparison: `.bar-chart` with `.bar-row` / `.bar-fill data-animate="bar" data-value="0-100"`
+- mini_table: `.mini-table-wrap` with `.mini-table` (2-4 rows)
+- figure_focus: `.figure-panel.ken-burns` with `<img object-fit contain>` and `.figure-label`
+
 Creative direction:
-1. Match the reference's craft: cinematic motion graphics, kinetic typography, ambient backgrounds, per-scene choreography, evidence panels when data/images are provided.
-2. Invent a UNIQUE visual identity for THIS paper — fresh palette, motifs, and scene designs suited to the topic. Every paper should look different.
-3. Use a full-bleed 9:16 stage (width 100%, aspect-ratio 9/16, no phone-chrome mockup borders). Center the stage on the page.
-4. Use system fonts only: {font_stack}. Do NOT load external fonts, CDNs, libraries, or network assets.
-5. REQUIRED minimum motion on every scene:
-   - Each `.scene` includes a `.ambient` wrapper with 2 `.ambient-orb` divs (continuous background drift).
-   - All on-screen text uses `data-reveal` with staggered `data-enter-ms` (phrase-by-phrase, synced to narration pacing within the scene).
-   - Source figure `<img>` tags are wrapped in `.ken-burns`.
-   Additional per-scene animation (counters, bars, SVG rings, etc.) is encouraged where it fits the content.
-6. Use narration as primary on-screen text — large, readable, mobile-friendly. Do not dump full narration as a wall of text.
+1. Match the reference craft: cinematic motion, kinetic typography, ambient backgrounds, evidence panels when data/images are provided.
+2. Invent a UNIQUE visual identity for THIS paper — fresh palette and motifs. Every paper should look different.
+3. Full-bleed 9:16 stage (width 100%, aspect-ratio 9/16). Center the stage on the page. No phone-chrome borders.
+4. System fonts only: {font_stack}. No external fonts, CDNs, or libraries.
+5. REQUIRED on every scene:
+   - `.ambient` wrapper with 2-3 `.ambient-orb` divs (opacity 0.25-0.35, pointer-events none, slow drift)
+   - On-screen text from `display_phrases` using `[data-reveal]` and each phrase's `enter_ms`
+   - Wrap each `emphasis` word in `<span class="emph">` inside its phrase element
+   - Source figure `<img>` tags wrapped in `.ken-burns`
+   - When `visual_layout` is set, render the matching catalog component using `chart_data`
+6. Typography: max ~12 words per visible line; 2-4 phrase reveals; centered flex layout. Do not dump full narration as a wall of text.
 7. Translate visual_description into HTML/CSS visuals. Do not display visual_description as visible text.
-8. If source_table is present, render a compact readable data card (2-4 key rows).
-9. If source_figure is present with a url, render it as the dominant evidence image (object-fit: contain) with a short label.
-10. When source evidence exists, give it a distinct panel above narration in a lower safe area.
+8. Keep visuals and narration vertically centered together in each scene — use `.scene` flex gap, not top/bottom split.
+9. Do NOT duplicate kit CSS for ambient, reveals, headline, subtext, stat-counter, bar-chart, mini-table — those are injected automatically. Scene-specific accent colors via CSS variables are fine.
 
 Audio-sync contract (NON-NEGOTIABLE — do not use setTimeout or data-dur for scene advance):
 1. Output one complete HTML document: <!DOCTYPE html>, <html>, <head>, <style>, <body>, <script>. No markdown fences.
@@ -82,15 +90,32 @@ def _load_motion_css() -> str:
     return match.group(1).strip() if match else ""
 
 
+def _load_motion_js() -> str:
+    path = _motion_snippet_path()
+    if not path.exists():
+        return ""
+    text = path.read_text(encoding="utf-8")
+    match = re.search(r"<script>(.*?)</script>", text, re.DOTALL | re.IGNORECASE)
+    return match.group(1).strip() if match else ""
+
+
+def _motion_sync_script() -> str:
+    """Injectable kit sync script with placeholders for audio timing."""
+    js = _load_motion_js()
+    if not js:
+        return _reveal_sync_script()
+    js = js.replace("__SCENE_DURATIONS_JSON__", PLACEHOLDER_SCENE_DURATIONS_JSON)
+    js = js.replace("__TOTAL_DURATION_JSON__", PLACEHOLDER_TOTAL_DURATION_JSON)
+    return f'\n<script data-infodemica-reveals="true">\n{js}\n</script>\n'
+
+
 def _load_motion_example_markup() -> str:
     path = _motion_snippet_path()
     if not path.exists():
         return ""
-    lines = path.read_text(encoding="utf-8").splitlines()
-    start = next((i for i, line in enumerate(lines) if "Example scene markup" in line), None)
-    if start is None:
-        return ""
-    return "\n".join(lines[start : start + 12])
+    text = path.read_text(encoding="utf-8")
+    examples = re.findall(r"<!-- ── Example.*?(?=\n<!-- ──|\n<script>)", text, re.DOTALL)
+    return "\n\n".join(example.strip() for example in examples if example.strip())
 
 
 def _load_sample_excerpt(max_chars: int = 12000) -> str:
@@ -148,17 +173,50 @@ def _resolve_source_figure(output_dir: Path, figure: dict[str, Any] | None, inde
     return resolved
 
 
-def _build_scenes_payload(output_dir: Path, script_path: Path) -> list[dict[str, Any]]:
+def _load_scene_durations(metadata_path: Path | None, scene_count: int, default: float = 6.0) -> list[float]:
+    if not metadata_path or not metadata_path.exists():
+        return [default] * scene_count
+    try:
+        with open(metadata_path, "r", encoding="utf-8") as f:
+            metadata = json.load(f)
+    except (OSError, json.JSONDecodeError):
+        return [default] * scene_count
+
+    boundaries = metadata.get("scene_boundaries", [])
+    durations = [
+        float(item.get("duration", item.get("clip_duration", default)))
+        for item in boundaries
+    ]
+    if len(durations) < scene_count:
+        durations.extend([default] * (scene_count - len(durations)))
+    return durations[:scene_count]
+
+
+def _build_scenes_payload(
+    output_dir: Path,
+    script_path: Path,
+    scene_durations: list[float] | None = None,
+) -> list[dict[str, Any]]:
     scenes = load_scenes(script_path)
+    if scene_durations is None:
+        scene_durations = _load_scene_durations(output_dir / "audio_metadata.json", len(scenes))
     payload = []
     for idx, scene in enumerate(scenes):
+        enriched = enrich_scene(scene)
+        phrases = compute_phrase_timings(
+            enriched.display_phrases or [],
+            scene_durations[idx] if idx < len(scene_durations) else 6.0,
+        )
         payload.append(
             {
                 "index": idx + 1,
-                "narration": scene.text,
-                "visual_description": scene.visual_content,
-                "source_table": scene.source_table,
-                "source_figure": _resolve_source_figure(output_dir, scene.source_figure, idx),
+                "narration": enriched.text,
+                "visual_description": enriched.visual_content,
+                "display_phrases": phrases,
+                "visual_layout": enriched.visual_layout,
+                "chart_data": enriched.chart_data,
+                "source_table": enriched.source_table,
+                "source_figure": _resolve_source_figure(output_dir, enriched.source_figure, idx),
             }
         )
     return payload
@@ -241,108 +299,72 @@ def _reveal_sync_script() -> str:
 """
 
 
+def _has_builtin_audio_sync(html: str) -> bool:
+    """True when HTML already includes a narration-driven scene sync script."""
+    lower = html.lower()
+    has_narration = (
+        'id="narration"' in lower
+        or "getelementbyid('narration')" in lower
+        or 'getelementbyid("narration")' in lower
+    )
+    has_durations = (
+        PLACEHOLDER_SCENE_DURATIONS_JSON in html
+        or re.search(r"scenedurations\s*=", lower.replace(" ", "")) is not None
+    )
+    has_timeupdate = "timeupdate" in lower
+    has_scenes = 'class="scene' in lower or "queryselectorall('.scene')" in lower
+    return has_narration and has_durations and has_timeupdate and has_scenes
+
+
+def _has_claude_audio_sync(html: str) -> bool:
+    """True when a non-kit script already drives narration/scene sync."""
+    without_kit = re.sub(
+        r'<script\s+data-infodemica-reveals="true"\s*>.*?</script>\s*',
+        "",
+        html,
+        count=1,
+        flags=re.DOTALL | re.IGNORECASE,
+    )
+    return _has_builtin_audio_sync(without_kit)
+
+
+def sanitize_presentation_html(html: str) -> str:
+    """Drop injected kit sync when Claude already shipped a complete audio player."""
+    if not _has_claude_audio_sync(html) or "data-infodemica-reveals" not in html:
+        return html
+    stripped = re.sub(
+        r'<script\s+data-infodemica-reveals="true"\s*>.*?</script>\s*',
+        "",
+        html,
+        count=1,
+        flags=re.DOTALL | re.IGNORECASE,
+    )
+    return stripped
+
+
 def _fallback_sync_script() -> str:
-    """Full audio sync with scene switching, controls, and staggered reveals."""
-    return f"""
-<script data-infodemica-reveals="true">
-(function () {{
-  var narration = document.getElementById('narration');
-  var scenes = Array.prototype.slice.call(document.querySelectorAll('.scene'));
-  var sceneDurations = {PLACEHOLDER_SCENE_DURATIONS_JSON};
-  var totalDuration = {PLACEHOLDER_TOTAL_DURATION_JSON};
-  var lastSceneIndex = -1;
-  var playButton = document.querySelector('[data-play-toggle]') || document.querySelector('.play-button') || document.querySelector('button');
-  var progressBar = document.querySelector('[data-progress-bar]') || document.querySelector('.progress-fill') || document.querySelector('.progress-bar');
-  var timeEl = document.querySelector('[data-time]');
-
-  function sceneIndexForTime(time) {{
-    var elapsed = 0;
-    for (var i = 0; i < sceneDurations.length; i += 1) {{
-      elapsed += Number(sceneDurations[i]) || 0;
-      if (time <= elapsed) return i;
-    }}
-    return Math.max(0, scenes.length - 1);
-  }}
-
-  function sceneStartTime(index) {{
-    var start = 0;
-    for (var i = 0; i < index; i += 1) {{
-      start += Number(sceneDurations[i]) || 0;
-    }}
-    return start;
-  }}
-
-  function format(seconds) {{
-    seconds = Math.max(0, Math.floor(seconds || 0));
-    return Math.floor(seconds / 60) + ':' + String(seconds % 60).padStart(2, '0');
-  }}
-
-  function setActiveScene(index) {{
-    scenes.forEach(function (scene, i) {{
-      scene.classList.toggle('active', i === index);
-    }});
-  }}
-
-  function resetReveals() {{
-    document.querySelectorAll('[data-reveal], .reveal-line').forEach(function (el) {{
-      el.classList.remove('is-visible');
-    }});
-  }}
-
-  function updateReveals(sceneIndex, currentTime) {{
-    var localMs = (currentTime - sceneStartTime(sceneIndex)) * 1000;
-    var scene = scenes[sceneIndex];
-    if (!scene) return;
-    scene.querySelectorAll('[data-reveal], .reveal-line').forEach(function (el) {{
-      var enterMs = parseFloat(el.getAttribute('data-enter-ms') || '0');
-      if (localMs >= enterMs) el.classList.add('is-visible');
-    }});
-  }}
-
-  function update() {{
-    if (!narration || !scenes.length) return;
-    var current = narration.currentTime || 0;
-    var idx = sceneIndexForTime(current);
-    if (idx !== lastSceneIndex) {{
-      lastSceneIndex = idx;
-      resetReveals();
-      setActiveScene(idx);
-    }}
-    updateReveals(idx, current);
-    if (progressBar && totalDuration > 0) {{
-      progressBar.style.width = Math.min(100, (current / totalDuration) * 100) + '%';
-    }}
-    if (timeEl) timeEl.textContent = format(current);
-  }}
-
-  if (narration) {{
-    narration.addEventListener('timeupdate', update);
-    narration.addEventListener('seeked', update);
-    narration.addEventListener('ended', update);
-  }}
-  if (playButton && narration) {{
-    playButton.addEventListener('click', function () {{
-      if (narration.paused) {{ narration.play(); playButton.textContent = 'Ⅱ'; }}
-      else {{ narration.pause(); playButton.textContent = '▶'; }}
-    }});
-  }}
-  setActiveScene(0);
-  update();
-}}());
-</script>
-"""
+    """Full audio sync with scene switching, controls, reveals, and kit components."""
+    return _motion_sync_script()
 
 
 def _ensure_motion(html: str) -> str:
-    """Inject shared motion CSS and audio-synced reveal handling."""
-    if "data-infodemica-motion" not in html:
-        css = _load_motion_css()
-        if css and "</head>" in html:
-            motion_style = f'<style data-infodemica-motion="true">\n{css}\n</style>'
+    """Inject or refresh shared motion CSS and audio-synced reveal handling."""
+    css = _load_motion_css()
+    if css:
+        motion_style = f'<style data-infodemica-motion="true">\n{css}\n</style>'
+        if re.search(r'<style\s+data-infodemica-motion="true"\s*>', html, re.IGNORECASE):
+            html = re.sub(
+                r'<style\s+data-infodemica-motion="true"\s*>.*?</style>\s*',
+                motion_style + "\n",
+                html,
+                count=1,
+                flags=re.DOTALL | re.IGNORECASE,
+            )
+        elif "</head>" in html:
             html = html.replace("</head>", motion_style + "\n</head>", 1)
 
-    if "data-infodemica-reveals" not in html and "</body>" in html:
-        html = html.replace("</body>", _reveal_sync_script() + "</body>", 1)
+    if "data-infodemica-reveals" not in html and not _has_claude_audio_sync(html) and "</body>" in html:
+        html = html.replace("</body>", _motion_sync_script() + "</body>", 1)
 
     return html
 
@@ -368,10 +390,12 @@ def _ensure_contract(html: str) -> str:
         else:
             html = audio_markup + html
 
-    if (
+    needs_sync_injection = (
         PLACEHOLDER_SCENE_DURATIONS_JSON not in html
         or PLACEHOLDER_TOTAL_DURATION_JSON not in html
-    ):
+    ) and not _has_claude_audio_sync(html)
+
+    if needs_sync_injection:
         sync_script = _fallback_sync_script()
         if "</body>" in html:
             html = html.replace("</body>", sync_script + "</body>", 1)
@@ -380,7 +404,7 @@ def _ensure_contract(html: str) -> str:
 
     html = _ensure_motion(html)
     html = _ensure_visible_code_cleanup(html)
-    return html
+    return sanitize_presentation_html(html)
 
 
 def _ensure_visible_code_cleanup(html: str) -> str:
@@ -473,7 +497,8 @@ def generate_presentation_html(
         raise ValueError("script.json has no scenes")
 
     paper = _load_paper(paper_path)
-    scenes_data = _build_scenes_payload(output_dir, script_path)
+    scene_durations = _load_scene_durations(output_dir / "audio_metadata.json", len(scenes))
+    scenes_data = _build_scenes_payload(output_dir, script_path, scene_durations)
 
     prompt = PROMPT_TEMPLATE.format(
         title=paper["title"],

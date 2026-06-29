@@ -396,6 +396,11 @@ class ShippingControlsTests(TestCase):
         self.assertIn("data-infodemica-motion", html)
         self.assertIn("orbDrift", html)
         self.assertIn("[data-reveal]", html)
+        self.assertIn("wordPop", html)
+        self.assertIn(".headline", html)
+        self.assertIn(".stat-counter", html)
+        self.assertIn("data-animate", html)
+        self.assertIn("shiftOrbPalette", html)
         self.assertIn("updateReveals", html)
         self.assertIn("resetReveals", html)
 
