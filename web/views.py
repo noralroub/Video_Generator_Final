@@ -129,21 +129,12 @@ def _pmc_image_viewer_url(pmcid: str, image_name: str) -> str:
 
 def _load_pmc_article_image_urls(pmcid: str) -> dict[str, str]:
     """Map PMC image file names to embeddable CDN image URLs from the article page."""
-    match = re.search(r"PMC\d+", pmcid, re.IGNORECASE)
-    if not match:
-        return {}
-    article_url = f"https://pmc.ncbi.nlm.nih.gov/articles/{match.group(0).upper()}/"
     try:
-        with urllib.request.urlopen(article_url, timeout=5) as response:
-            html = response.read().decode("utf-8", errors="ignore")
+        source_figures = _pipeline_module("source_figures")
+        return source_figures.load_pmc_cdn_images(pmcid)
     except Exception as exc:
-        logger.warning(f"Could not load PMC article image URLs from {article_url}: {exc}")
+        logger.warning(f"Could not load PMC CDN images for {pmcid}: {exc}")
         return {}
-
-    image_urls: dict[str, str] = {}
-    for url in re.findall(r'https://cdn\.ncbi\.nlm\.nih\.gov/pmc/blobs/[^"\']+', html):
-        image_urls[Path(url).name] = url
-    return image_urls
 
 
 def _normalize_figure_snippet(figure: dict, pmcid: str, article_images: dict[str, str]) -> dict:
@@ -229,10 +220,8 @@ def _source_figure_proxy_url(pmid: str, index: int) -> str:
 
 
 def _source_figure_cache_path(output_dir: Path, index: int, source_url: str) -> Path:
-    suffix = Path(source_url).suffix.lower()
-    if suffix not in {".jpg", ".jpeg", ".png", ".webp", ".gif"}:
-        suffix = ".jpg"
-    return output_dir / "source_figures" / f"figure_{index}{suffix}"
+    source_figures = _pipeline_module("source_figures")
+    return source_figures.figure_cache_path(output_dir, index, source_url)
 
 
 
@@ -345,9 +334,10 @@ def _load_source_snippets(output_dir: Path) -> dict:
         try:
             with open(paper_path, "r", encoding="utf-8") as f:
                 paper_data = json.load(f)
-            article_images = _load_pmc_article_image_urls(output_dir.name) if paper_data.get("figures") else {}
+            pmcid = str(paper_data.get("pmcid") or "").strip()
+            article_images = _load_pmc_article_image_urls(pmcid) if pmcid and paper_data.get("figures") else {}
             snippets["figures"] = [
-                _normalize_figure_snippet(figure, output_dir.name, article_images)
+                _normalize_figure_snippet(figure, pmcid, article_images)
                 for figure in (paper_data.get("figures") or [])[:8]
             ]
             snippets["tables"] = [
@@ -1927,6 +1917,13 @@ def pipeline_result(request, pmid: str):
         presentation_html_doc = journal_brand.ensure_journal_brand(
             presentation_html_doc, brand=brand
         )
+        source_figures = _pipeline_module("source_figures")
+        script_path = output_dir / "script.json"
+        if script_path.exists():
+            source_figures.normalize_script_figures(output_dir)
+            presentation_html_doc = source_figures.apply_script_figures_to_html(
+                presentation_html_doc, output_dir, script_path
+            )
         presentation_html_doc = _ensure_result_embed(presentation_html_doc)
         return render(
             request,
@@ -1990,8 +1987,27 @@ def review_script(request, pmid: str):
             if figure_index_raw:
                 try:
                     figure_index = int(figure_index_raw)
-                    source_figure = dict(source_snippets["figures"][figure_index])
-                    source_figure["url"] = _source_figure_proxy_url(pmid, figure_index)
+                    original = source_snippets["figures"][figure_index]
+                    source_figure = dict(original)
+                    source_figure["figure_index"] = figure_index
+                    download_url = (original.get("url") or "").strip()
+                    if "tileshop" in download_url or download_url.endswith(".html"):
+                        download_url = ""
+                    source_figure["url"] = download_url or original.get("url") or ""
+                    source_figure["source_url"] = (
+                        download_url or original.get("source_url") or original.get("url") or ""
+                    )
+                    source_figures = _pipeline_module("source_figures")
+                    rel_url = source_figures.ensure_figure_cached(
+                        output_dir, figure_index, source_figure
+                    )
+                    if rel_url:
+                        source_figure["url"] = rel_url
+                    else:
+                        errors.append(
+                            f"Scene {index + 1} could not download the selected figure."
+                        )
+                        source_figure = None
                 except (ValueError, IndexError):
                     errors.append(f"Scene {index + 1} selected image is no longer available.")
             video_index_raw = (request.POST.get(f"scene_{index}_source_video") or "").strip()
@@ -2112,33 +2128,19 @@ def source_figure_image(request, pmid: str, index: int):
     except IndexError:
         raise Http404("Source image not found")
 
-    source_url = figure.get("url") or ""
-    if not source_url:
+    if not (figure.get("url") or figure.get("source_url")):
         raise Http404("Source image not found")
 
-    cache_path = _source_figure_cache_path(output_dir, index, source_url)
-    content_type = mimetypes.guess_type(cache_path.name)[0] or "image/jpeg"
-    if cache_path.exists():
-        return HttpResponse(cache_path.read_bytes(), content_type=content_type)
-
-    request_obj = urllib.request.Request(
-        source_url,
-        headers={
-            "User-Agent": "Mozilla/5.0 Infodemica local source image loader",
-            "Accept": "image/avif,image/webp,image/apng,image/svg+xml,image/*,*/*;q=0.8",
-        },
-    )
-    try:
-        with urllib.request.urlopen(request_obj, timeout=12) as response:
-            image_bytes = response.read()
-            content_type = response.headers.get_content_type() or content_type
-    except Exception as exc:
-        logger.warning(f"Could not fetch source figure {pmid} index {index} from {source_url}: {exc}")
+    source_figures = _pipeline_module("source_figures")
+    rel_url = source_figures.ensure_figure_cached(output_dir, index, figure)
+    if not rel_url:
         raise Http404("Source image could not be loaded")
 
-    cache_path.parent.mkdir(parents=True, exist_ok=True)
-    cache_path.write_bytes(image_bytes)
-    return HttpResponse(image_bytes, content_type=content_type)
+    cache_path = output_dir / rel_url
+    if not cache_path.exists():
+        raise Http404("Source image not found")
+    content_type = mimetypes.guess_type(cache_path.name)[0] or "image/jpeg"
+    return HttpResponse(cache_path.read_bytes(), content_type=content_type)
 
 
 @login_required

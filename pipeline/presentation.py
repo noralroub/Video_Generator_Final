@@ -17,6 +17,7 @@ from claude_presentation import (
     generate_presentation_html,
 )
 from scenes import compute_phrase_timings, enrich_scene, load_scenes, wrap_emphasis_html
+from source_figures import apply_script_figures_to_html
 
 logger = logging.getLogger(__name__)
 
@@ -290,6 +291,8 @@ def render_presentation_claude(
     if html.count('class="scene') < len(scenes) or "</html>" not in html or "</body>" not in html:
         logger.warning("Claude presentation was incomplete; using deterministic HTML video fallback")
         html = _fallback_html(title, scenes, scene_durations, total_duration, audio_src)
+
+    html = apply_script_figures_to_html(html, script_path.parent, script_path)
 
     output_path.parent.mkdir(parents=True, exist_ok=True)
     output_path.write_text(html, encoding="utf-8")

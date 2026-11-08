@@ -10,6 +10,7 @@ from audio import generate_audio, save_audio_metadata
 from journal_brand import copy_brand_assets
 from presentation import build_presentation_metadata, render_presentation_claude
 from pubmed import fetch_paper
+from source_figures import normalize_script_figures, prefetch_paper_figures
 from scenes import generate_scenes, save_scenes, load_scenes
 
 logger = logging.getLogger(__name__)
@@ -141,7 +142,7 @@ def orchestrate_pipeline(
             name="fetch-paper",
             description=f"Fetching paper {pmid} from PubMed Central",
             check_completion=lambda: check_paper_fetched(output_dir),
-            execute=lambda: fetch_paper(pmid, str(output_dir)),
+            execute=lambda: _fetch_paper_step(pmid, output_dir),
         ),
         PipelineStep(
             name="generate-script",
@@ -197,6 +198,15 @@ def orchestrate_pipeline(
     logger.info(f"Output files in: {output_dir}")
 
 
+def _fetch_paper_step(pmid: str, output_dir: Path) -> None:
+    """Fetch paper from PMC and prefetch figure images."""
+    fetch_paper(pmid, str(output_dir))
+    try:
+        prefetch_paper_figures(output_dir)
+    except Exception as exc:
+        logger.warning("Figure prefetch failed (non-fatal): %s", exc)
+
+
 def _generate_script_step(output_dir: Path) -> None:
     """Execute the generate-script step."""
     # Load paper data
@@ -233,6 +243,10 @@ def _generate_audio_step(output_dir: Path, voice: str) -> None:
 def _generate_presentation_step(output_dir: Path) -> None:
     """Execute the generate-presentation step."""
     copy_brand_assets(output_dir)
+    try:
+        normalize_script_figures(output_dir)
+    except Exception as exc:
+        logger.warning("Script figure normalize failed (non-fatal): %s", exc)
     render_presentation_claude(
         script_path=output_dir / "script.json",
         output_path=output_dir / "presentation.html",

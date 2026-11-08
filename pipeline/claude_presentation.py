@@ -11,6 +11,7 @@ from typing import Any
 
 from journal_brand import ensure_journal_brand
 from scenes import compute_phrase_timings, enrich_scene, load_scenes
+from source_figures import normalize_source_figure
 
 logger = logging.getLogger(__name__)
 
@@ -41,6 +42,7 @@ Component catalog (use kit classes — do NOT invent new chart types when visual
 - bar_comparison: `.bar-chart` with `.bar-row` / `.bar-fill data-animate="bar" data-value="0-100"`
 - mini_table: `.mini-table-wrap` with `.mini-table` (2-4 rows)
 - figure_focus: `.figure-panel.ken-burns` with `<img object-fit contain>` and `.figure-label`
+  When `source_figure.url` is provided in scene JSON, you MUST set the `<img src>` to that EXACT relative path (e.g. `source_figures/figure_1.jpg`). Never use /source-image/ paths or remote URLs.
 
 Creative direction:
 1. Match the reference craft: cinematic motion, kinetic typography, ambient backgrounds, evidence panels when data/images are provided.
@@ -157,22 +159,29 @@ def _load_paper(paper_path: Path | None) -> dict[str, Any]:
     return {"title": data.get("title") or "Research explainer"}
 
 
-def _resolve_source_figure(output_dir: Path, figure: dict[str, Any] | None, index: int) -> dict[str, Any] | None:
+def _resolve_source_figure(
+    output_dir: Path, figure: dict[str, Any] | None, scene_index: int
+) -> dict[str, Any] | None:
+    """Resolve figure to a presentation-local relative url (uses figure_index, not scene index)."""
+    _ = scene_index  # legacy scripts only; figure index lives on source_figure
     if not figure:
         return None
-    resolved = dict(figure)
-    figures_dir = output_dir / "source_figures"
-    if figures_dir.exists():
-        for path in sorted(figures_dir.glob(f"figure_{index}.*")):
-            resolved["url"] = f"source_figures/{path.name}"
-            return resolved
-        for path in sorted(figures_dir.glob("figure_*.*")):
-            resolved["url"] = f"source_figures/{path.name}"
-            return resolved
-    url = (figure.get("url") or "").strip()
+    resolved = normalize_source_figure(output_dir, figure)
+    if not resolved:
+        return None
+    url = (resolved.get("url") or "").strip()
+    if url.startswith("source_figures/"):
+        return resolved
+    figure_index = resolved.get("figure_index")
+    if figure_index is not None:
+        figures_dir = output_dir / "source_figures"
+        if figures_dir.exists():
+            for path in sorted(figures_dir.glob(f"figure_{figure_index}.*")):
+                resolved["url"] = f"source_figures/{path.name}"
+                return resolved
     if url and not url.startswith(("http://", "https://", "/")):
-        resolved["url"] = url
-    return resolved
+        return resolved
+    return resolved if url else None
 
 
 def _load_scene_durations(metadata_path: Path | None, scene_count: int, default: float = 6.0) -> list[float]:
