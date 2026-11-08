@@ -244,7 +244,11 @@ def generate_audio(
         raise ValueError("scenes list cannot be empty")
 
     output_dir = Path(output_dir)
-    client = genai.Client(api_key=api_key)
+    # TTS (speech_config, AUDIO modality) requires the v1beta API.
+    client = genai.Client(
+        api_key=api_key,
+        http_options=types.HttpOptions(api_version="v1beta"),
+    )
 
     # Ensure all scene texts have punctuation
     scene_texts = [_ensure_punctuation(scene.text) for scene in scenes]

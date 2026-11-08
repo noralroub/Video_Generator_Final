@@ -1919,8 +1919,14 @@ def pipeline_result(request, pmid: str):
                 )
         presentation_html_doc = _ensure_presentation_code_cleanup(presentation_html_doc)
         claude_presentation = _pipeline_module("claude_presentation")
+        journal_brand = _pipeline_module("journal_brand")
+        brand = getattr(settings, "PRESENTATION_JOURNAL_BRAND", None)
+        journal_brand.copy_brand_assets(output_dir, brand=brand)
         presentation_html_doc = claude_presentation.sanitize_presentation_html(presentation_html_doc)
         presentation_html_doc = claude_presentation._ensure_motion(presentation_html_doc)
+        presentation_html_doc = journal_brand.ensure_journal_brand(
+            presentation_html_doc, brand=brand
+        )
         presentation_html_doc = _ensure_result_embed(presentation_html_doc)
         return render(
             request,

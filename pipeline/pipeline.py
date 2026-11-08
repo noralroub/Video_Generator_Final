@@ -7,6 +7,7 @@ from pathlib import Path
 from typing import Callable, Optional
 
 from audio import generate_audio, save_audio_metadata
+from journal_brand import copy_brand_assets
 from presentation import build_presentation_metadata, render_presentation_claude
 from pubmed import fetch_paper
 from scenes import generate_scenes, save_scenes, load_scenes
@@ -231,6 +232,7 @@ def _generate_audio_step(output_dir: Path, voice: str) -> None:
 
 def _generate_presentation_step(output_dir: Path) -> None:
     """Execute the generate-presentation step."""
+    copy_brand_assets(output_dir)
     render_presentation_claude(
         script_path=output_dir / "script.json",
         output_path=output_dir / "presentation.html",

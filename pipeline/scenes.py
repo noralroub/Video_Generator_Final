@@ -250,8 +250,11 @@ def generate_scenes(paper_data: dict, api_key: str | None = None) -> List[Scene]
     except ImportError as exc:
         raise ImportError("Install google-genai to generate scenes") from exc
 
-    # Configure Gemini client
-    client = genai.Client(api_key=api_key)
+    # JSON response mode requires the v1beta API (not v1).
+    client = genai.Client(
+        api_key=api_key,
+        http_options=types.HttpOptions(api_version="v1beta"),
+    )
 
     # Truncate paper text if too long
     full_text = paper_data["full_text"]

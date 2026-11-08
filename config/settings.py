@@ -90,6 +90,9 @@ SCRIPT_REVIEW_REQUIRED = os.getenv("SCRIPT_REVIEW_REQUIRED", "True") == "True"
 # Set SIMULATION_MODE=True in your .env file or environment to enable
 SIMULATION_MODE = os.getenv("SIMULATION_MODE", "False") == "True"
 
+# Fixed journal logo on presentation slides (empty disables overlay)
+PRESENTATION_JOURNAL_BRAND = os.getenv("PRESENTATION_JOURNAL_BRAND", "jacc").strip().lower() or None
+
 INSTALLED_APPS = [
     "django.contrib.admin",
     "django.contrib.auth",
@@ -264,9 +267,9 @@ CELERY_TASK_SEND_SENT_EVENT = True
 CELERY_TASK_ALWAYS_EAGER = os.getenv("CELERY_TASK_ALWAYS_EAGER", "False") == "True"
 CELERY_TASK_EAGER_PROPAGATES = os.getenv("CELERY_TASK_EAGER_PROPAGATES", "True") == "True"
 
-# Celery worker pool (use 'solo' for Windows, 'prefork' for Linux)
-# Windows doesn't support prefork pool properly, so use solo pool
-if sys.platform == "win32":
+# Celery worker pool (use 'solo' for Windows/macOS, 'prefork' for Linux)
+# Prefork forked children on macOS often lose the task registry (Celery 5.3 + Python 3.12).
+if sys.platform in ("win32", "darwin"):
     CELERY_WORKER_POOL = "solo"
 else:
     CELERY_WORKER_POOL = "prefork"

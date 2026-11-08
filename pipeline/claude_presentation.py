@@ -9,6 +9,7 @@ import re
 from pathlib import Path
 from typing import Any
 
+from journal_brand import ensure_journal_brand
 from scenes import compute_phrase_timings, enrich_scene, load_scenes
 
 logger = logging.getLogger(__name__)
@@ -56,6 +57,7 @@ Creative direction:
 7. Translate visual_description into HTML/CSS visuals. Do not display visual_description as visible text.
 8. Keep visuals and narration vertically centered together in each scene — use `.scene` flex gap, not top/bottom split.
 9. Do NOT duplicate kit CSS for ambient, reveals, headline, subtext, stat-counter, bar-chart, mini-table — those are injected automatically. Scene-specific accent colors via CSS variables are fine.
+10. Do NOT add journal, publisher, or network logos anywhere on the slide — a fixed top-right journal brand lockup is injected automatically after generation.
 
 Audio-sync contract (NON-NEGOTIABLE — do not use setTimeout or data-dur for scene advance):
 1. Output one complete HTML document: <!DOCTYPE html>, <html>, <head>, <style>, <body>, <script>. No markdown fences.
@@ -403,6 +405,7 @@ def _ensure_contract(html: str) -> str:
             html += sync_script
 
     html = _ensure_motion(html)
+    html = ensure_journal_brand(html)
     html = _ensure_visible_code_cleanup(html)
     return sanitize_presentation_html(html)
 
